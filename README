@@ -21,7 +21,7 @@ sudo lxc-attach karma-yoga-bot
 pg_dump -U admin -d admin -h localhost > backup.sql
 ```
 
-Файлов: скопировать папку /app в /home/alexandr/backup/
+Файлов: скопировать папку ``/app`` в ``/home/alexandr/backup/``
 
 
 1. Обновление файлов
