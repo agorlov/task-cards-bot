@@ -1,0 +1,57 @@
+version: '3.5'
+
+services:
+  karmadb:
+    container_name: karmadb
+    ports:
+      - "5432:5432"
+    image: postgres:14.3-alpine
+    volumes:
+      - karmadb-volume:/var/lib/postgresql/data
+      - ./db-init:/docker-entrypoint-initdb.d
+    networks:
+      - my-network
+
+  karma_bot:
+    container_name: karma_bot
+    build: .
+    # restart: always
+    depends_on:
+      - karmadb
+    volumes:
+      - .:/app
+    networks:
+      - my-network
+    command: python bot.py
+
+
+  karma_cron:
+    container_name: karma_cron
+    environment:
+      TZ: Europe/Moscow
+    build: .
+    depends_on:
+      - karmadb
+    volumes:
+      - .:/app
+    networks:
+      - my-network      
+    command: cron -f
+
+  adminer:
+    image: adminer
+    restart: always
+    ports:
+      - 8081:8080
+    depends_on:
+      - karmadb
+    networks:
+      - my-network      
+
+volumes:
+  karmadb-volume:
+
+
+networks:
+  my-network:
+    driver: bridge  
