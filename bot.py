@@ -266,7 +266,22 @@ def time_msg(message):
     # Форматирование даты и времени в нужный формат
     nowdate = result['now'].strftime("%d.%m.%Y %H:%M:%S")
 
-    bot.send_message(message.chat.id, f"Сейчас: {nowdate}", parse_mode='html')
+    print(message)
+
+    bot.send_message(
+        message.chat.id,
+        f"""
+        Сейчас: {nowdate}
+        Дата из сообщения message.date: {message.date}
+        """,
+        parse_mode='html'
+    )
+    
+    bot.send_message(
+        message.chat.id,
+        f"Debug info: {vars(message)}",
+        parse_mode='html'
+    )
 
 
 # Список
