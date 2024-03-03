@@ -5,14 +5,19 @@ FROM python:3.10
 WORKDIR /app
 
 # Install any needed packages specified in requirements.txt
-RUN pip install pyTelegramBotAPI psycopg2 python-dateutil git+https://github.com/agorlov/whispercpp.py
+# git+https://github.com/agorlov/whispercpp.py - wispercpp binding
+RUN pip install pyTelegramBotAPI psycopg2 python-dateutil faster-whisper
 
 # Install cron
-RUN apt-get update && apt-get -y install cron ffmpeg
+RUN apt-get update && apt-get -y install cron
 
 COPY cronjob /etc/cron.d/cronjob
 
-COPY ggml-small.bin /root/.ggml-models/ggml-small.bin
+# For whisper.cpp
+#COPY ggml-small-q5_0.bin /root/.ggml-models/ggml-small-q5_0.bin
+#COPY ggml-medium-q5_0.bin /root/.ggml-models/ggml-medium-q5_0.bin
+# For Faster-Whisper
+COPY models /app/models
 
 # Give execution rights on the cron job and create the log file
 RUN chmod 0644 /etc/cron.d/cronjob && touch /var/log/cron.log
