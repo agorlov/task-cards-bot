@@ -74,3 +74,16 @@ iptables -A FORWARD -p tcp -d 10.0.3.134 --dport 5432 -j ACCEPT
 ```sh
 psql -U admin -d admin -h localhost -a -f app.sql
 ```
+
+### Экспорт/импорт докер-образа
+
+Экспорт:
+docker save myimage:latest > myimage_latest.tar
+
+docker save karma-yoga-bot_karma_bot:latest > karma-yoga-bot_karma_bot.tar
+
+Перенос в прод:
+scp myimage_latest.tar user@prod-server:/path/to/location
+
+Импорт:
+docker load < myimage_latest.tar

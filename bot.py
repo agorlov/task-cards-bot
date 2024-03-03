@@ -80,7 +80,10 @@ import traceback
 from config import TOKEN, DBCONN
 from middlewarebot import MiddlewareBot
 
-from whispercpp import Whisper
+# Whisper.cpp - распознавание войсов
+# from whispercpp import Whisper
+# Faster-whisper
+from faster_whisper import WhisperModel
 
 from src.started_task_controller import StartedTaskController
 
@@ -606,11 +609,25 @@ def done_task(message):
 
 
 @bot.callback_query_handler(func=lambda call: call.data == 'new_task')
-def btn_answer(call):
-    bot.send_message(call.message.chat.id, f"@todo Кнопка ['Взять ещё дело'] нажата.")
+def btn_answer_new_task(call):   
+    try:
+        bot.answer_callback_query(callback_query_id=call.id, text="Ок, минутку..")
+        started_task = StartedTaskController(
+            db,
+            bot,
+            call.message.chat.id,
+            call.from_user.id
+        )
+        started_task.startTask()
+    except Exception as e:
+        bot.send_message(
+            call.message.chat.id, 
+            f"Произошла ошибка при выполнении команды 'дело': {e}\n{traceback.format_exc()}"
+        )
 
 @bot.callback_query_handler(func=lambda call: call.data == 'plan_task')
-def btn_answer(call):
+def btn_answer_plan_task(call):
+    bot.answer_callback_query(callback_query_id=call.id, text="Ок, делаю")
     bot.send_message(call.message.chat.id, f"@todo Кнопка ['Запланировать повторно'] нажата.")    
 
 
@@ -624,7 +641,7 @@ def btn_answer(call):
 )
 def start_task(message):
     try:
-        started_task = StartedTaskController(db, bot, message)
+        started_task = StartedTaskController(db, bot, message.chat.id, message.from_user.id)
         started_task.startTask()
     except Exception as e:
         bot.send_message(
@@ -813,30 +830,43 @@ def delayed_task_msg(message):
 def new_task_msg(message):
     # Добавляем дело
     try:
-        # Получение идентификатора пользователя из сообщения
-        user_id = message.from_user.id
 
-        # Текст сообщения будет добавлен как новая задача в базу данных
-        task_text = message.text
-
-        # Установка соединения с базой данных
-        cursor = db.cursor()
-
-        # Выполнение SQL-запроса для добавления новой задачи
-        cursor.execute("INSERT INTO tasks (owner_id, status, task_text, planned_date) VALUES (%s, %s, %s, NOW())",
-                       (user_id, 'ожидает выполнения', task_text))
-
-        update_score(user_id, 5) # +5XP
-
-        bot.send_message(message.chat.id, f"Записал 👍 +5 XP:\n```\n{task_text}\n```", parse_mode="Markdown") # , reply_markup=markup
-
-        # Закрытие курсора и соединения с базой данных
-        cursor.close()
-
+        add_task(message.chat.id, message.from_user.id, message.text)
 
     except Exception as e:
         bot.send_message(message.chat.id, f"Произошла ошибка: {e}")
 
+
+def add_task(chat_id, user_id, task_text):
+    # Добавляем дело
+        
+    # Установка соединения с базой данных
+    cursor = db.cursor()
+
+    # Выполнение SQL-запроса для добавления новой задачи
+    cursor.execute(
+        """
+        INSERT INTO tasks (
+            owner_id,
+            status,
+            task_text,
+            planned_date
+        ) 
+        VALUES (%s, %s, %s, NOW())
+        """,
+        (user_id, 'ожидает выполнения', task_text)
+    )
+
+    update_score(user_id, 5) # +5XP
+
+    bot.send_message(
+        chat_id,
+        f"Записал 👍 +5 XP:\n```\n{task_text}\n```",
+        parse_mode="Markdown"
+    )
+
+    # Закрытие курсора и соединения с базой данных
+    cursor.close()
 
 
 
@@ -850,18 +880,45 @@ def voice_msg(message):
     with open(f"voice_task_{user_id}.ogg", 'wb') as new_file:
         new_file.write(downloaded_file)
     
-    bot.send_message(message.chat.id, f"Voice принят, обрабатываю...")
+    bot.send_message(message.chat.id, f"Voice принят, обрабатываю... (займет 15-20 секунд) 🎙")
 
-    p = Process(target=process_voice, args=(f"voice_task_{user_id}.ogg", user_id))
+    p = Process(
+        target=process_voice,
+        args=(f"voice_task_{user_id}.ogg", user_id, message.chat.id)
+    )
     p.start()
 
-def process_voice(file_name, user_id):
+def process_voice(file_name: str, user_id, chat_id) -> None:
     print("Обработка войса в process_voice...")
-    w = Whisper('small')
-    result = w.transcribe(file_name)
-    text = w.extract_text(result)
-    bot.send_message(user_id, f"```{text}```")
+    whisper = WhisperModel(
+        'small', # medium не влезла в 2Гб доступных на хостинге :(
+        device="cpu",
+        compute_type="int8",
+        download_root="./models"
+    )
+    
+    segments, info = whisper.transcribe(
+        file_name,
+        beam_size=5,
+        language='ru',
+        initial_prompt=""
+    )
+    
+    task_text = "\n".join([segment.text for segment in segments])
+
+    add_task(chat_id, user_id, task_text)
+
     print("Обработка войса в process_voice завершена")
+
+# library: whispercpp (git+https://github.com/agorlov/whispercpp.py)
+# def process_voice(file_name, user_id):
+#     print("Обработка войса в process_voice...")
+#     # w = Whisper('small')
+#     w = Whisper('small-q5_0')
+#     result = w.transcribe(file_name)
+#     text = w.extract_text(result)
+#     bot.send_message(user_id, f"```{text}```")
+#     print("Обработка войса в process_voice завершена")
 
 
 

@@ -11,21 +11,19 @@ class StartedTaskController:
 
     Author: Alexander Gorlov
     """    
-    def __init__(self, db, bot, message):
+    def __init__(self, db, bot, chat_id, user_id):
         self.bot = bot
         self.db = db
-        self.message = message
+        self.chat_id = chat_id
+        self.user_id = user_id
 
     def startTask(self):
         """
         Начать работу над задачей
         """
 
-        message = self.message
         bot = self.bot
         db = self.db
-
-        user_id = message.from_user.id
         cursor = db.cursor()
         
         cursor.execute(
@@ -36,12 +34,12 @@ class StartedTaskController:
                 status IN ('в работе')
                 AND owner_id = %s
             """,
-            (user_id,)
+            (self.user_id,)
         )
         count_in_progress = cursor.fetchone()[0]
         
         if count_in_progress > 0:
-            bot.send_message(message.chat.id, "У вас уже есть задача в работе.")
+            bot.send_message(self.chat_id, "У вас уже есть задача в работе.")
             return
         
 
@@ -54,14 +52,14 @@ class StartedTaskController:
                 AND owner_id = %s
                 AND planned_date <= NOW()
             """,
-            (user_id,)
+            (self.user_id,)
         )
         available_tasks = cursor.fetchall()
         
         if len(available_tasks) <= 0:
             bot.send_message(
-                message.chat.id, 
-                "У вас закончились задачи, придумайте новое дело."
+                self.chat_id, 
+                f"У вас закончились задачи, придумайте новое дело."
             )            
             return
 
@@ -74,7 +72,7 @@ class StartedTaskController:
                 AND owner_id = %s
                 AND planned_date <= NOW()
             """,
-            (user_id,)
+            (self.user_id,)
         )
         paused_task = cursor.fetchall()
 
@@ -90,12 +88,12 @@ class StartedTaskController:
             UPDATE tasks SET status = 'в работе', start_time = NOW()
             WHERE task_number = %s AND owner_id = %s
             """, 
-            (task_number, user_id,)
+            (task_number, self.user_id,)
         )
         cursor.close()
         
         bot.send_message(
-            message.chat.id,
+            self.chat_id,
             f"{task_text}"
         )
 
