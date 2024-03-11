@@ -66,16 +66,18 @@ XP - генерировать на неделю
 from telebot import types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+
 import psycopg2
 from psycopg2.extras import DictCursor
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
-from datetime import datetime
+from datetime import datetime, timedelta
 from dateutil import parser
 
 import logging
 import random
 import re
 import traceback
+import pprint
 
 from config import TOKEN, DBCONN
 from middlewarebot import MiddlewareBot
@@ -170,6 +172,13 @@ def my_middleware_handler(message):
     user_id = message.from_user.id
     current_datetime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
     print(f"{current_datetime}: {user_id}: {message.text}")
+
+    # залогируем струкутуру message
+    with open("log.txt", "a", encoding="utf-8") as f:
+        f.write(f"{datetime.now().strftime('%d.%m.%Y %H:%M:%S')} msg: {message.text}\n")
+        f.write(str(message))
+        f.write(f"\n{pprint.pformat(message, indent=4)}\n")
+
 
 
 # Register the middleware function
@@ -408,7 +417,11 @@ def task_list(message):
                 """
 
         # Отправка сообщения с списком задач пользователю
-        bot.send_message(message.chat.id, response, parse_mode="HTML")
+        if len(response) > 4096:
+            for x in range(0, len(response), 4096):
+                bot.send_message(message.chat.id, response[x:x+4096], parse_mode="HTML")
+        else:
+            bot.send_message(message.chat.id, response, parse_mode="HTML")
 
     except Exception as e:
         bot.send_message(message.chat.id, f"Произошла ошибка: {traceback.format_exc()}")
@@ -597,7 +610,9 @@ def done_task(message):
             # Кнопки:
             markup = types.InlineKeyboardMarkup(row_width=3)
             btn1 = types.InlineKeyboardButton('Взять следующее', callback_data='new_task')
-            btn2 = types.InlineKeyboardButton('Запланировать повторно', callback_data='plan_task')
+            btn2 = types.InlineKeyboardButton(
+                'Запланировать повторно', callback_data='plan_task_' + str(task_number)
+            )
             markup.add(btn1, btn2)
 
             bot.send_message(
@@ -635,10 +650,47 @@ def btn_answer_new_task(call):
             f"Произошла ошибка при выполнении команды 'дело': {e}\n{traceback.format_exc()}"
         )
 
-@bot.callback_query_handler(func=lambda call: call.data == 'plan_task')
+@bot.callback_query_handler(func=lambda call: call.data.startswith('plan_task'))
 def btn_answer_plan_task(call):
-    bot.answer_callback_query(callback_query_id=call.id, text="Ок, делаю")
-    bot.send_message(call.message.chat.id, f"@todo Кнопка ['Запланировать повторно'] нажата.")    
+    try:
+        # Получение идентификатора пользователя из сообщения
+        user_id = call.from_user.id
+
+        planned_date = datetime.now() + timedelta(days=1)
+        task_id = call.data.split('_')[2]
+
+        # Получить задачу с task_id
+        cursor = db.cursor()
+        cursor.execute(
+            "SELECT task_text FROM tasks WHERE task_number = %s AND owner_id = %s",
+            (task_id, user_id)
+        )
+        task_text = cursor.fetchone()[0]
+        cursor.close()
+        
+        cursor = db.cursor()
+        cursor.execute(
+            "INSERT INTO tasks (owner_id, status, task_text, planned_date) VALUES (%s, %s, %s, %s)",
+            (user_id, 'ожидает выполнения', task_text, planned_date.strftime("%Y-%m-%d %H:%M:%S"))
+            
+        )
+        cursor.close()
+
+
+        update_score(user_id, 5) # +5XP
+       
+        bot.send_message(
+            call.message.chat.id,
+            f"Готово 👍 +5 XP:\n```\n{task_text}\n```",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        bot.send_message(
+            call.message.chat.id, 
+            f"Произошла ошибка при выполнении команды 'дело': {e}\n{traceback.format_exc()}"
+        )
+
+
 
 
 
@@ -845,13 +897,18 @@ def new_task_msg(message):
     # Добавляем дело
     try:
 
-        add_task(message.chat.id, message.from_user.id, message.text)
+        add_task(message.chat.id, message.from_user.id, message.text, message.message_id)
+
+        with open("log.txt", "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now().strftime('%d.%m.%Y %H:%M:%S')} msg: {message.text}\n")
+            f.write(str(message))
+            f.write(f"\n{pprint.pformat(message, indent=4)}\n")
 
     except Exception as e:
         bot.send_message(message.chat.id, f"Произошла ошибка: {e}")
 
 
-def add_task(chat_id, user_id, task_text):
+def add_task(chat_id, user_id, task_text, telegram_message_id):
     # Добавляем дело
         
     # Установка соединения с базой данных
@@ -861,14 +918,15 @@ def add_task(chat_id, user_id, task_text):
     cursor.execute(
         """
         INSERT INTO tasks (
+            telegram_message_id,
             owner_id,
             status,
             task_text,
             planned_date
         ) 
-        VALUES (%s, %s, %s, NOW())
+        VALUES (%s,%s, %s, %s, NOW())
         """,
-        (user_id, 'ожидает выполнения', task_text)
+        (telegram_message_id, user_id, 'ожидает выполнения', task_text)
     )
 
     update_score(user_id, 5) # +5XP
@@ -898,11 +956,11 @@ def voice_msg(message):
 
     p = Process(
         target=process_voice,
-        args=(f"voice_task_{user_id}.ogg", user_id, message.chat.id)
+        args=(f"voice_task_{user_id}.ogg", user_id, message.chat.id, message.message_id)
     )
     p.start()
 
-def process_voice(file_name: str, user_id, chat_id) -> None:
+def process_voice(file_name: str, user_id, chat_id, message_id) -> None:
     print("Обработка войса в process_voice...")
     whisper = WhisperModel(
         'small', # medium не влезла в 2Гб доступных на хостинге :(
@@ -920,7 +978,7 @@ def process_voice(file_name: str, user_id, chat_id) -> None:
     
     task_text = "\n".join([segment.text for segment in segments])
 
-    add_task(chat_id, user_id, task_text)
+    add_task(chat_id, user_id, task_text, message_id)
 
     print("Обработка войса в process_voice завершена")
 
@@ -933,6 +991,35 @@ def process_voice(file_name: str, user_id, chat_id) -> None:
 #     text = w.extract_text(result)
 #     bot.send_message(user_id, f"```{text}```")
 #     print("Обработка войса в process_voice завершена")
+
+
+@bot.edited_message_handler(content_types=['text'])
+def handle_edited_message(message):
+
+    message_id = message.message_id
+    # обновить дело новым текстом в таблице tasks, по колонке task_id и owner_id
+    cursor = db.cursor()
+    cursor.execute(
+        "UPDATE tasks SET task_text = %s WHERE owner_id = %s AND telegram_message_id = %s",
+        (message.text, message.from_user.id, message_id)
+    )
+    cursor.close()
+    bot.send_message(
+        message.chat.id,
+        f"Отредактировано:\n```\n{message.text}\n```",
+        parse_mode="Markdown"
+    )
+
+
+
+
+                     
+                     
+                     
+    
+
+# Начинаем опрос сервера Telegram
+bot.polling()
 
 
 
