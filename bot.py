@@ -206,6 +206,7 @@ def add_user_to_db(user):
     cursor.close()
 
 
+
 def done_compliment():
     # Похвалить за завершенное дело
     compliments = [
@@ -546,6 +547,75 @@ def pause_task(message):
             f"Произошла ошибка (на паузе) задачи: {e}"
         )        
 
+
+def done_current_task(user_id, chat_id, completion_comment=None):
+    """
+    Отметить текущую задачу как выполненную и обновить баллы пользователя
+    """
+    
+    cursor = db.cursor()
+
+    # Выбор задачи со статусом "в работе"
+    cursor.execute(
+        """
+        SELECT
+            task_number, task_text, start_time
+        FROM tasks
+        WHERE status in ('в работе', 'на паузе') AND owner_id = %s
+        LIMIT 1
+        """,
+        (user_id,)
+    )
+    row = cursor.fetchone()
+
+    if row:
+        task_number, task_text, start_time = row
+
+        # Обновление записи задачи в базе данных
+        cursor.execute(
+            """
+            UPDATE tasks 
+            SET
+                status = 'завершена',
+                end_time = NOW(),
+                completion_comment = %s
+            WHERE task_number = %s AND owner_id = %s
+            """,
+            (completion_comment, task_number, user_id,)
+        )
+        cursor.close()
+
+        end_time = datetime.now()
+
+        time_taken = (end_time - start_time).total_seconds() / 60
+
+        # Отправьте пользователю сообщение о том, что задача была отложена
+        update_score(user_id, 15)
+
+
+        # Кнопки:
+        markup = types.InlineKeyboardMarkup(row_width=3)
+        btn1 = types.InlineKeyboardButton('Взять следующее', callback_data='new_task')
+        btn2 = types.InlineKeyboardButton(
+            'Запланировать повторно', callback_data='plan_task_' + str(task_number)
+        )
+        markup.add(btn1, btn2)
+
+        bot.send_message(
+            chat_id,
+            f"Сделано:\n```\n{task_text}\n```\n{done_compliment()} [✨ +15 XP], за {time_taken:.0f} мин",
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+
+    else:
+        bot.send_message(
+            chat_id,
+            "В данный момент в работе задач нет, показать список? /list"
+        )
+
+
+
 # завершить задачу
 @bot.message_handler(
         func=lambda message: message.text.lower().startswith("готово")
@@ -559,78 +629,23 @@ def pause_task(message):
         or message.text.lower().startswith("сделалано")
 )
 def done_task(message):
-    try:
-        cursor = db.cursor()
 
-        user_id = message.from_user.id
+    user_id = message.from_user.id
+    text = message.text
+    chat_id = message.chat.id
+
+    try:        
 
         try:
-            command, completion_comment = message.text.split(maxsplit=1)
+            command, completion_comment = text.split(maxsplit=1)
         except ValueError as e:
             completion_comment = None
 
-        # Выбор задачи со статусом "в работе"
-        cursor.execute(
-            """
-            SELECT
-                task_number, task_text, start_time
-            FROM tasks
-            WHERE status in ('в работе', 'на паузе') AND owner_id = %s
-            LIMIT 1
-            """,
-            (user_id,)
-        )
-        row = cursor.fetchone()
-
-        if row:
-            task_number, task_text, start_time = row
-
-            # Обновление записи задачи в базе данных
-            cursor.execute(
-                """
-                UPDATE tasks 
-                SET
-                    status = 'завершена',
-                    end_time = NOW(),
-                    completion_comment = %s
-                WHERE task_number = %s AND owner_id = %s
-                """,
-                (completion_comment, task_number, user_id,)
-            )
-            cursor.close()
-
-            end_time = datetime.now()
-
-            time_taken = (end_time - start_time).total_seconds() / 60
-
-            # Отправьте пользователю сообщение о том, что задача была отложена
-            update_score(user_id, 15)
-
-
-            # Кнопки:
-            markup = types.InlineKeyboardMarkup(row_width=3)
-            btn1 = types.InlineKeyboardButton('Взять следующее', callback_data='new_task')
-            btn2 = types.InlineKeyboardButton(
-                'Запланировать повторно', callback_data='plan_task_' + str(task_number)
-            )
-            markup.add(btn1, btn2)
-
-            bot.send_message(
-                message.chat.id,
-                f"Сделано:\n```\n{task_text}\n```\n{done_compliment()} [✨ +15 XP], за {time_taken:.0f} мин",
-                parse_mode="Markdown",
-                reply_markup=markup
-            )
-
-        else:
-            bot.send_message(
-                message.chat.id,
-                "В данный момент в работе задач нет, показать список? /list"
-            )
+        done_current_task(user_id, chat_id, completion_comment=completion_comment)
 
 
     except Exception as e:
-        bot.send_message(message.chat.id, f"Произошла ошибка при отложении задачи: {e}")
+        bot.send_message(chat_id, f"Произошла ошибка при отложении задачи: {e}")
 
 
 @bot.callback_query_handler(func=lambda call: call.data == 'new_task')
@@ -711,6 +726,13 @@ def start_task(message):
             message.chat.id, 
             f"Произошла ошибка при выполнении команды 'дело': {e}\n{traceback.format_exc()}"
         )
+
+@bot.callback_query_handler(func=lambda call: call.data == 'done_task_btn')
+def btn_done_task(call):
+    """
+    Кнопка Готово задачи
+    """
+    done_current_task(call.from_user.id, call.message.chat.id)
 
 
 @bot.message_handler(

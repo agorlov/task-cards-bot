@@ -1,3 +1,5 @@
+from telebot import types
+
 import random
 import traceback
 
@@ -91,10 +93,20 @@ class StartedTaskController:
             (task_number, self.user_id,)
         )
         cursor.close()
+
+        # Кнопка готово, с действием соответствующим команде /done
+        reply_markup = types.InlineKeyboardMarkup()
+        reply_markup.add(
+            types.InlineKeyboardButton(
+                "Готово",
+                callback_data=f"done_task_btn"
+            )
+        )
         
         bot.send_message(
             self.chat_id,
-            f"{task_text}"
+            f"{task_text}",
+            reply_markup=reply_markup
         )
 
 
