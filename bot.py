@@ -389,7 +389,9 @@ def task_list(message):
         # Выполнение SQL-запроса для получения списка задач пользователя
         cursor.execute(
             """
-            SELECT task_number, task_text, creation_time, start_time, end_time
+            SELECT
+                task_number, task_text, creation_time,
+                start_time, end_time, completion_comment
             FROM tasks
             WHERE owner_id = %s AND status = 'завершена'
             ORDER BY end_time DESC
@@ -406,7 +408,7 @@ def task_list(message):
             current_date = None
             response = ""
             for task in tasks:
-                task_number, task_text, creation_time, start_time, end_time = task
+                task_number, task_text, creation_time, start_time, end_time, comment = task
 
                 time_taken = (end_time - start_time).total_seconds() / 60
                 
@@ -415,8 +417,13 @@ def task_list(message):
                     response += f"\n\n{current_date}:\n"  # Добавление даты в качестве заголовка
 
                 response += f"""
-            ✅ <b>#{task_number}</b> {task_text} <code>за {time_taken:.0f} мин</code>
+    ✅ <b>#{task_number}</b> {task_text} <code>за {time_taken:.0f} мин</code>"""
+
+                if comment:
+                    response += f"""
+            💬 {comment}
                 """
+
 
         # Отправка сообщения с списком задач пользователю
         if len(response) > 4096:
