@@ -14,6 +14,13 @@ import logging
 from config import TOKEN, DBCONN
 from middlewarebot import MiddlewareBot
 
+# Настройка базовой конфигурации логирования
+logging.basicConfig(filename='app.log',  # Указываем файл для записи логов
+                    level=logging.DEBUG,  # Уровень логирования
+                    format='%(asctime)s %(message)s',  # Формат сообщений
+                    datefmt='%d/%m %H:%M:%S')  # Формат времени
+
+
 # TeleBot (мидл-варе умеет логировать)
 bot = MiddlewareBot(TOKEN)
 

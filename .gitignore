@@ -3,4 +3,5 @@ __pycache__
 voice*.ogg
 tmp/
 *.bin
+app.log
  

@@ -92,6 +92,7 @@ from faster_whisper import WhisperModel
 from src.started_task_controller import StartedTaskController
 
 
+
 # Настройка базовой конфигурации логирования
 logging.basicConfig(filename='app.log',  # Указываем файл для записи логов
                     level=logging.DEBUG,  # Уровень логирования
@@ -710,6 +711,11 @@ def btn_answer_plan_task(call):
             f"Готово 👍 +5 XP:\n```\n{task_text}\n```",
             parse_mode="Markdown"
         )
+
+        # Сохраним эмбеддинг для задачи (смысловое пространство, для поиска похожих задач)
+        task_emb = OAIEmbedding()
+        task_emb.save_for_task(self, task_id, user_id, task_text, db)
+
     except Exception as e:
         bot.send_message(
             call.message.chat.id, 
@@ -908,6 +914,11 @@ def delayed_task_msg(message):
         parse_mode="Markdown"
     )
 
+    # Сохраним эмбеддинг для задачи (смысловое пространство, для поиска похожих задач)
+    task_emb = OAIEmbedding()
+    task_emb.save_for_task(self, task_id, user_id, task_text, db)
+
+
 
 # Идея: если отвечаем на текст с заданием, то это воспринимается как редактирование
     
@@ -971,11 +982,6 @@ def edit_msg(message):
 def new_task_msg(message):
     # Добавляем дело
     add_task(message.chat.id, message.from_user.id, message.text, message.message_id)
-
-    with open("log.txt", "a", encoding="utf-8") as f:
-        f.write(f"{datetime.now().strftime('%d.%m.%Y %H:%M:%S')} msg: {message.text}\n")
-        f.write(str(message))
-        f.write(f"\n{pprint.pformat(message, indent=4)}\n")
 
 
 def add_task(chat_id, user_id, task_text, telegram_message_id):
@@ -1049,7 +1055,7 @@ def process_voice(file_name: str, user_id, chat_id, message_id) -> None:
     
     task_text = "\n".join([segment.text for segment in segments])
 
-    add_task(chat_id, user_id, task_text, message_id)
+    add_task(chat_id, user_id, "🎤 " + task_text, message_id)
 
     print("Обработка войса в process_voice завершена")
 

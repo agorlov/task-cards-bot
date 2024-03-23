@@ -4,4 +4,7 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 # Run the Python script at 19:00 every day
 0 19 * * * root python /app/hello.py >> /var/log/cron.log 2>&1
 
+# Каждые 5 минут, обновляем эмбеддинги
+*/5 * * * * root python /app/updemb.py >> /var/log/cron.log 2>&1
+
 # Don't forget to end the file with a newline
