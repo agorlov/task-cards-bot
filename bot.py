@@ -72,12 +72,14 @@ from psycopg2.extras import DictCursor
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 from datetime import datetime, timedelta
 from dateutil import parser
+import uuid
 
 import logging
 import random
 import re
 import traceback
 import pprint
+from functools import wraps
 
 from config import TOKEN, DBCONN
 from middlewarebot import MiddlewareBot
@@ -88,6 +90,13 @@ from middlewarebot import MiddlewareBot
 from faster_whisper import WhisperModel
 
 from src.started_task_controller import StartedTaskController
+
+
+# Настройка базовой конфигурации логирования
+logging.basicConfig(filename='app.log',  # Указываем файл для записи логов
+                    level=logging.DEBUG,  # Уровень логирования
+                    format='%(asctime)s %(message)s',  # Формат сообщений
+                    datefmt='%d/%m %H:%M:%S')  # Формат времени
 
 
 # TeleBot (мидл-варе умеет логировать)
@@ -139,6 +148,11 @@ _Представьте: это GTD (Getting Things Done) с духовной с
 
 🌟 *Каждое дело будет делать тебя и мир лучше!* 🌟
 
+/help2 - дополнительные возможности
+
+"""
+
+help_advanced = """
 ## Другие команды
 
 1. **Выполненные дела**: Узнай что было сделано, командой `"Выполненные"` /history
@@ -146,7 +160,8 @@ _Представьте: это GTD (Getting Things Done) с духовной с
 3. **Пауза**: Можно поставить текущее дело на паузу командой "/пауза" /pause и продолжить командой "/продолжить"
 4. **Другое дело**: если задача не подходит, вы не готовы сейчас её брать, есть команда "/другое дело"  /another
 5. **Готово с комментом**: Можно указать коммент о результате, когда дело готово: "/готово комментарий о результате"
-6. **Отредактировать задачу**: Можно отредактировать задачу командой "/edit номер_дела новый текст"
+6. **Отредактировать задачу**: Можно отредактировать задачу командой "/edit номер\_дела новый текст"
+
 """
 
 # текущая дата
@@ -163,28 +178,53 @@ _Представьте: это GTD (Getting Things Done) с духовной с
 # """
 
 # 
-# Define your middleware function
+
 def my_middleware_handler(message):
-    # Perform your actions here, e.g., logging the message
-    # Сохраним пользователя и время его последней активности:
+    """
+    Middleware function
+
+    Perform your actions here, e.g., logging the message
+    Сохраним пользователя и время его последней активности:
+    """
     add_user_to_db(message.from_user)
 
     # Вывод в лог с датой и временем
     user_id = message.from_user.id
+    username = message.from_user.username
     current_datetime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-    print(f"{current_datetime}: {user_id}: {message.text}")
+    print(f"{current_datetime}: {user_id} {username}> {message.text}")
 
     # залогируем струкутуру message
-    with open("log.txt", "a", encoding="utf-8") as f:
-        f.write(f"{datetime.now().strftime('%d.%m.%Y %H:%M:%S')} msg: {message.text}\n")
-        f.write(str(message))
-        f.write(f"\n{pprint.pformat(message, indent=4)}\n")
+    logging.info(f"{user_id} {username}: {message.text}")
 
 
 
 # Register the middleware function
 bot.middleware_handler(my_middleware_handler)
 
+
+def exception_handler(func):
+    """
+    Декоратор для логирования ошибок в обработчиках команд.
+    """
+    @wraps(func)
+    def wrapper(message):
+        try:
+            return func(message)
+        except Exception as e:
+            short_uuid = str(uuid.uuid4())[:6]
+            logging.error(
+                "%s ошибка '%s': %s",
+                short_uuid,
+                func.__name__,
+                str(e),
+                exc_info=True
+            )
+            bot.send_message(
+                message.chat.id,
+                f"Произошла ошибка. Попробуйте повторно, либо напишите @agorlov\nid={short_uuid}"
+            )
+    return wrapper
 
 
 # Функция для добавления нового пользователя в базу данных
@@ -254,114 +294,93 @@ def user_score(user_id):
 
 
 @bot.message_handler(commands=['start'])
+@exception_handler
 def start_msg(message):
-
     bot.send_message(message.chat.id, help_message, parse_mode="Markdown")    
 
 
-@bot.message_handler(commands=['help'])
-def start_msg(message):
-    # Обработка команды /help
+@bot.message_handler(
+    func=lambda message: message.text.lower() == "help"
+    or message.text.lower() == "/help"
+    or message.text.lower() == "справка"
+    or message.text.lower() == "помощь"
+)
+@exception_handler
+def help_msg(message):
+    """
+    Обработка команды /help
+    """
     bot.send_message(message.chat.id, help_message, parse_mode="Markdown")
 
-# /time
-@bot.message_handler(commands=['time'])
-def time_msg(message):
+@bot.message_handler(commands=['help2'])
+@exception_handler
+def start_msg(message):
+    bot.send_message(message.chat.id, help_advanced, parse_mode="Markdown")    
 
-    cursor = db.cursor(cursor_factory=DictCursor)
-    cursor.execute("SELECT NOW()")
-    result = cursor.fetchone()
-
-    for key, value in result.items():
-        print(f"{key}: {value}")
-
-    cursor.close()
-
-    # Форматирование даты и времени в нужный формат
-    nowdate = result['now'].strftime("%d.%m.%Y %H:%M:%S")
-
-    print(message)
-
-    bot.send_message(
-        message.chat.id,
-        f"""
-        Сейчас: {nowdate}
-        Дата из сообщения message.date: {message.date}
-        """,
-        parse_mode='html'
-    )
-    
-    bot.send_message(
-        message.chat.id,
-        f"Debug info: {vars(message)}",
-        parse_mode='html'
-    )
 
 
 # Список
 @bot.message_handler(
     func=lambda message: message.text.lower() == "список"
-    or message.text.lower().startswith("/список")
-    or message.text.lower().startswith("/list")
+    or message.text.lower() == "/список"
+    or message.text.lower() == "/list"
+    or message.text.lower() == "list"
 )
+@exception_handler
 def task_list(message):
-    try:
-        # Получение идентификатора пользователя из сообщения
-        user_id = message.from_user.id
+    # Получение идентификатора пользователя из сообщения
+    user_id = message.from_user.id
 
-        # Установка соединения с базой данных
-        cursor = db.cursor()
+    # Установка соединения с базой данных
+    cursor = db.cursor()
 
-        # Выполнение SQL-запроса для получения списка задач пользователя
-        cursor.execute(
-            """
-            SELECT task_number, task_text, status, creation_time, planned_date
-            FROM tasks
-            WHERE owner_id = %s AND status IN ('ожидает выполнения', 'в работе', 'на паузе')
-            ORDER BY 
-                CASE 
-                    WHEN status = 'в работе' THEN 1
-                    WHEN status = 'на паузе' THEN 2
-                    ELSE 3
-                END, task_number
-            """,
-            (user_id,)
-        )
-        tasks = cursor.fetchall()
-        cursor.close()
+    # Выполнение SQL-запроса для получения списка задач пользователя
+    cursor.execute(
+        """
+        SELECT task_number, task_text, status, creation_time, planned_date
+        FROM tasks
+        WHERE owner_id = %s AND status IN ('ожидает выполнения', 'в работе', 'на паузе')
+        ORDER BY 
+            CASE 
+                WHEN status = 'в работе' THEN 1
+                WHEN status = 'на паузе' THEN 2
+                ELSE 3
+            END, task_number
+        """,
+        (user_id,)
+    )
+    tasks = cursor.fetchall()
+    cursor.close()
 
-        score = user_score(user_id)
+    score = user_score(user_id)
 
-        if not tasks:
-            response = "В твоем списке нет дел... А может ты уже все сделал?\nЧтобы добавить новое дело, просто напиши его сообщением и оно добавится в список!"
-            bot.send_message(message.chat.id, response, parse_mode="HTML")
-            return
-
-        # Формирование сообщения с списком задач        
-        response = f"Что хотелось бы сделать ({len(tasks)}):\n"
-        for task in tasks:
-            task_number, task_text, status, creation_time, planned_date = task
-            creation_time = creation_time.strftime("%d.%m.%Y %H:%M:%S")            
-            if status == "в работе":
-                task_status = "<b>🚀 В РАБОТЕ</b>: "
-            elif status == "на паузе":
-                task_status = "<b>⏸️ ПАУЗА </b>: "
-            else:
-                task_status = ""
-
-            response += f"• {task_status}<b>#{task_number}</b> {task_text} (от {creation_time})\n"
-
-            if planned_date > datetime.now():
-                response += f"    📆 на {planned_date.strftime('%d.%m.%Y')}\n"
-
-        response += f"\n[🏆 <b>{score} XP</b>]"
-
-
-        # Отправка сообщения с списком задач пользователю
+    if not tasks:
+        response = "В твоем списке нет дел... А может ты уже все сделал?\nЧтобы добавить новое дело, просто напиши его сообщением и оно добавится в список!"
         bot.send_message(message.chat.id, response, parse_mode="HTML")
+        return
 
-    except Exception as e:
-        bot.send_message(message.chat.id, f"Произошла ошибка: {e}")
+    # Формирование сообщения с списком задач        
+    response = f"Что хотелось бы сделать ({len(tasks)}):\n"
+    for task in tasks:
+        task_number, task_text, status, creation_time, planned_date = task
+        creation_time = creation_time.strftime("%d.%m.%Y %H:%M:%S")            
+        if status == "в работе":
+            task_status = "<b>🚀 В РАБОТЕ</b>: "
+        elif status == "на паузе":
+            task_status = "<b>⏸️ ПАУЗА </b>: "
+        else:
+            task_status = ""
+
+        response += f"• {task_status}<b>#{task_number}</b> {task_text} (от {creation_time})\n"
+
+        if planned_date > datetime.now():
+            response += f"    📆 на {planned_date.strftime('%d.%m.%Y')}\n"
+
+    response += f"\n[🏆 <b>{score} XP</b>]"
+
+
+    # Отправка сообщения с списком задач пользователю
+    bot.send_message(message.chat.id, response, parse_mode="HTML")
 
 
 
@@ -378,62 +397,59 @@ def task_list(message):
         or message.text.lower().startswith("завершенные")
         or message.text.lower().startswith("/завершенные")
 )
-def task_list(message):
-    try:
-        # Получение идентификатора пользователя из сообщения
-        user_id = message.from_user.id
+@exception_handler
+def done_list(message):
+    # Получение идентификатора пользователя из сообщения
+    user_id = message.from_user.id
 
-        # Установка соединения с базой данных
-        cursor = db.cursor()
+    # Установка соединения с базой данных
+    cursor = db.cursor()
 
-        # Выполнение SQL-запроса для получения списка задач пользователя
-        cursor.execute(
-            """
-            SELECT
-                task_number, task_text, creation_time,
-                start_time, end_time, completion_comment
-            FROM tasks
-            WHERE owner_id = %s AND status = 'завершена'
-            ORDER BY end_time DESC
-            """,
-            (user_id,)
-        )
-        tasks = cursor.fetchall()
-        cursor.close()        
+    # Выполнение SQL-запроса для получения списка задач пользователя
+    cursor.execute(
+        """
+        SELECT
+            task_number, task_text, creation_time,
+            start_time, end_time, completion_comment
+        FROM tasks
+        WHERE owner_id = %s AND status = 'завершена'
+        ORDER BY end_time DESC
+        """,
+        (user_id,)
+    )
+    tasks = cursor.fetchall()
+    cursor.close()        
 
-        if not tasks:
-            response = "В твоем списке нет завершенных дел.\nДобавь новое дело, просто напиши его сообщением и оно добавится в список. По готовности дай команду - готово."
-        else:        
-            # Формирование сообщения с списком задач
-            current_date = None
-            response = ""
-            for task in tasks:
-                task_number, task_text, creation_time, start_time, end_time, comment = task
+    if not tasks:
+        response = "В твоем списке нет завершенных дел.\nДобавь новое дело, просто напиши его сообщением и оно добавится в список. По готовности дай команду - готово."
+    else:        
+        # Формирование сообщения с списком задач
+        current_date = None
+        response = ""
+        for task in tasks:
+            task_number, task_text, creation_time, start_time, end_time, comment = task
 
-                time_taken = (end_time - start_time).total_seconds() / 60
-                
-                if current_date != end_time.strftime("%d.%m.%Y"):
-                    current_date = end_time.strftime("%d.%m.%Y")
-                    response += f"\n\n{current_date}:\n"  # Добавление даты в качестве заголовка
+            time_taken = (end_time - start_time).total_seconds() / 60
+            
+            if current_date != end_time.strftime("%d.%m.%Y"):
+                current_date = end_time.strftime("%d.%m.%Y")
+                response += f"\n\n{current_date}:\n"  # Добавление даты в качестве заголовка
 
-                response += f"""
+            response += f"""
     ✅ <b>#{task_number}</b> {task_text} <code>за {time_taken:.0f} мин</code>"""
 
-                if comment:
-                    response += f"""
+            if comment:
+                response += f"""
             💬 {comment}
-                """
+            """
 
 
-        # Отправка сообщения с списком задач пользователю
-        if len(response) > 4096:
-            for x in range(0, len(response), 4096):
-                bot.send_message(message.chat.id, response[x:x+4096], parse_mode="HTML")
-        else:
-            bot.send_message(message.chat.id, response, parse_mode="HTML")
-
-    except Exception as e:
-        bot.send_message(message.chat.id, f"Произошла ошибка: {traceback.format_exc()}")
+    # Отправка сообщения с списком задач пользователю
+    if len(response) > 4096:
+        for x in range(0, len(response), 4096):
+            bot.send_message(message.chat.id, response[x:x+4096], parse_mode="HTML")
+    else:
+        bot.send_message(message.chat.id, response, parse_mode="HTML")
 
 
 
@@ -444,61 +460,56 @@ def task_list(message):
         or message.text.lower().startswith("/later")
         or message.text.lower().startswith("/отложить")
 )
+@exception_handler
 def postpone_task(message):
-    try:
-        cursor = db.cursor()
+    cursor = db.cursor()
 
-        user_id = message.from_user.id
+    user_id = message.from_user.id
 
-        # Выбор задачи со статусом "в работе"
+    # Выбор задачи со статусом "в работе"
+    cursor.execute(
+        """
+        SELECT
+            task_number, task_text
+        FROM tasks
+        WHERE status = 'в работе' AND owner_id = %s
+        LIMIT 1
+        """,
+        (user_id,)
+    )
+    row = cursor.fetchone()
+
+    if row:
+        task_number, task_text = row
+
+        # Обновление записи задачи в базе данных
         cursor.execute(
             """
-            SELECT
-                task_number, task_text
-            FROM tasks
-            WHERE status = 'в работе' AND owner_id = %s
-            LIMIT 1
-            """,
-            (user_id,)
-        )
-        row = cursor.fetchone()
+            UPDATE tasks
+            SET status = 'ожидает выполнения',
+                postponement_count = postponement_count + 1,
+                start_time = NULL
+            WHERE task_number = %s AND owner_id = %s
+            """, 
+            (task_number, user_id,)
+        )            
 
-        if row:
-            task_number, task_text = row
+        # Закройте соединение с базой данных
+        cursor.close()
 
-            # Обновление записи задачи в базе данных
-            cursor.execute(
-                """
-                UPDATE tasks
-                SET status = 'ожидает выполнения',
-                    postponement_count = postponement_count + 1,
-                    start_time = NULL
-                WHERE task_number = %s AND owner_id = %s
-                """, 
-                (task_number, user_id,)
-            )            
+        update_score(user_id, -5) # -5XP
 
-            # Закройте соединение с базой данных
-            cursor.close()
-
-            update_score(user_id, -5) # -5XP
-
-            # Отправьте пользователю сообщение о том, что задача была отложена
-            bot.send_message(message.chat.id, 
-                f"Отложена [😳 -5 XP]:\n```\n{task_text}\n```", 
-                parse_mode="Markdown"
-            )
-
-        else:
-            bot.send_message(message.chat.id, 
-                "В данный момент нет задач 'в работе' нет."
-            )
-
-    except Exception as e:
-        # Обработка ошибок
+        # Отправьте пользователю сообщение о том, что задача была отложена
         bot.send_message(message.chat.id, 
-            f"Произошла ошибка при отложении задачи: {e}"
+            f"Отложена [😳 -5 XP]:\n```\n{task_text}\n```", 
+            parse_mode="Markdown"
         )
+
+    else:
+        bot.send_message(message.chat.id, 
+            "В данный момент нет задач 'в работе' нет."
+        )
+
 
 # поставить на паузу
 @bot.message_handler(
@@ -506,54 +517,50 @@ def postpone_task(message):
         or message.text.lower().startswith("/пауза")
         or message.text.lower() == "/pause"
 )
+@exception_handler
 def pause_task(message):
-    try:
-        cursor = db.cursor()
 
-        user_id = message.from_user.id
+    cursor = db.cursor()
 
-        # Выбор задачи со статусом "в работе"
-        cursor.execute(
-            """
-            SELECT
-                task_number, task_text
-            FROM tasks
-            WHERE status = 'в работе' AND owner_id = %s
-            LIMIT 1
-            """,
-            (user_id,)
-        )
-        row = cursor.fetchone()
+    user_id = message.from_user.id
 
-        if not row:
-            bot.send_message(message.chat.id, "В данный момент нет задач 'в работе' нет.")
-            return
+    # Выбор задачи со статусом "в работе"
+    cursor.execute(
+        """
+        SELECT
+            task_number, task_text
+        FROM tasks
+        WHERE status = 'в работе' AND owner_id = %s
+        LIMIT 1
+        """,
+        (user_id,)
+    )
+    row = cursor.fetchone()
 
-        task_number, task_text = row
+    if not row:
+        bot.send_message(message.chat.id, "В данный момент нет задач 'в работе' нет.")
+        return
 
-        # Обновление записи задачи в базе данных
-        cursor.execute(
-            """
-            UPDATE tasks
-            SET status = 'на паузе',
-                start_time = NULL
-            WHERE task_number = %s AND owner_id = %s
-            """,
-            (task_number, user_id,)
-        )
-        cursor.close()
+    task_number, task_text = row
 
-        # Отправьте пользователю сообщение о том, что задача была отложена
-        bot.send_message(
-            message.chat.id,
-            f"На паузе:\n```\n{task_text}\n```",
-            parse_mode="Markdown"
-        )
+    # Обновление записи задачи в базе данных
+    cursor.execute(
+        """
+        UPDATE tasks
+        SET status = 'на паузе',
+            start_time = NULL
+        WHERE task_number = %s AND owner_id = %s
+        """,
+        (task_number, user_id,)
+    )
+    cursor.close()
 
-    except Exception as e:
-        bot.send_message(message.chat.id, 
-            f"Произошла ошибка (на паузе) задачи: {e}"
-        )        
+    # Отправьте пользователю сообщение о том, что задача была отложена
+    bot.send_message(
+        message.chat.id,
+        f"На паузе:\n```\n{task_text}\n```",
+        parse_mode="Markdown"
+    )
 
 
 def done_current_task(user_id, chat_id, completion_comment=None):
@@ -611,7 +618,7 @@ def done_current_task(user_id, chat_id, completion_comment=None):
 
         bot.send_message(
             chat_id,
-            f"Сделано:\n```\n{task_text}\n```\n{done_compliment()} [✨ +15 XP], за {time_taken:.0f} мин",
+            f"{done_compliment()} [✨ +15 XP], за {time_taken:.0f} мин",
             parse_mode="Markdown",
             reply_markup=markup
         )
@@ -636,24 +643,20 @@ def done_current_task(user_id, chat_id, completion_comment=None):
         or message.text.lower().startswith("/сделалано")
         or message.text.lower().startswith("сделалано")
 )
+@exception_handler
 def done_task(message):
 
     user_id = message.from_user.id
     text = message.text
     chat_id = message.chat.id
 
-    try:        
+    try:
+        command, completion_comment = text.split(maxsplit=1)
+    except ValueError as e:
+        completion_comment = None
 
-        try:
-            command, completion_comment = text.split(maxsplit=1)
-        except ValueError as e:
-            completion_comment = None
+    done_current_task(user_id, chat_id, completion_comment=completion_comment)
 
-        done_current_task(user_id, chat_id, completion_comment=completion_comment)
-
-
-    except Exception as e:
-        bot.send_message(chat_id, f"Произошла ошибка при отложении задачи: {e}")
 
 
 @bot.callback_query_handler(func=lambda call: call.data == 'new_task')
@@ -725,15 +728,10 @@ def btn_answer_plan_task(call):
     or message.text.lower() == "/продолжить"
     or message.text.lower() == "продолжить"
 )
+@exception_handler
 def start_task(message):
-    try:
-        started_task = StartedTaskController(db, bot, message.chat.id, message.from_user.id)
-        started_task.startTask()
-    except Exception as e:
-        bot.send_message(
-            message.chat.id, 
-            f"Произошла ошибка при выполнении команды 'дело': {e}\n{traceback.format_exc()}"
-        )
+    started_task = StartedTaskController(db, bot, message.chat.id, message.from_user.id)
+    started_task.startTask()
 
 @bot.callback_query_handler(func=lambda call: call.data == 'done_task_btn')
 def btn_done_task(call):
@@ -748,93 +746,91 @@ def btn_done_task(call):
         or message.text.lower().startswith("/другое дело")
         or message.text.lower().startswith("/another")
 )
+@exception_handler
 def other_task(message):
-    try:
-        cursor = db.cursor()
 
-        user_id = message.from_user.id
+    cursor = db.cursor()
 
-        # Выбор задачи со статусом "в работе"
-        cursor.execute(
-            """
-            SELECT
-                task_number, task_text
-            FROM tasks
-            WHERE status = 'в работе' AND owner_id = %s
-            LIMIT 1
-            """,
-            (user_id,)
+    user_id = message.from_user.id
+
+    # Выбор задачи со статусом "в работе"
+    cursor.execute(
+        """
+        SELECT
+            task_number, task_text
+        FROM tasks
+        WHERE status = 'в работе' AND owner_id = %s
+        LIMIT 1
+        """,
+        (user_id,)
+    )
+    row = cursor.fetchone()
+
+    if not row:
+        bot.send_message(message.chat.id, 
+            "В данный момент нет задач 'в работе' нет."
         )
-        row = cursor.fetchone()
+        return
 
-        if not row:
-            bot.send_message(message.chat.id, 
-                "В данный момент нет задач 'в работе' нет."
-            )
-            return
+    task_number, task_text = row
+
+    # Обновление записи задачи в базе данных
+    cursor.execute(
+        """
+        UPDATE tasks
+        SET status = 'ожидает выполнения',
+            postponement_count = postponement_count + 1,
+            start_time = NULL
+        WHERE task_number = %s AND owner_id = %s
+        """, 
+        (task_number, user_id,)
+    )            
+
+    cursor.close()
+
+    update_score(user_id, -5) # -5XP
+
+    bot.send_message(message.chat.id, 
+        f"Отложена [😳 -5 XP]:\n```\n{task_text}\n```", 
+        parse_mode="Markdown"
+    )
+
+    # Выбор другой задачи для пользователя
+    cursor = db.cursor()
+    cursor.execute(
+        """
+        SELECT task_number, task_text
+        FROM tasks
+        WHERE status IN ('ожидает выполнения')
+        AND owner_id = %s
+        AND planned_date <= NOW()
+        AND task_number != %s
+        ORDER BY RANDOM()
+        LIMIT 1
+        """,
+        (user_id, task_number,)
+    )
+    new_task = cursor.fetchone()
+
+    if not new_task:
+        bot.send_message(
+            message.chat.id, 
+            "У тебя закончились задачи, придумайте новое дело."
+        )        
+        return
     
-        task_number, task_text = row
+    new_task_number, new_task_text = new_task
 
-        # Обновление записи задачи в базе данных
-        cursor.execute(
-            """
-            UPDATE tasks
-            SET status = 'ожидает выполнения',
-                postponement_count = postponement_count + 1,
-                start_time = NULL
-            WHERE task_number = %s AND owner_id = %s
-            """, 
-            (task_number, user_id,)
-        )            
+    cursor.execute(
+        "UPDATE tasks SET status = 'в работе', start_time = NOW() WHERE task_number = %s AND owner_id = %s", 
+        (new_task_number, user_id,)
+    )
+    cursor.close()        
 
-        cursor.close()
-
-        update_score(user_id, -5) # -5XP
-
-        bot.send_message(message.chat.id, 
-            f"Отложена [😳 -5 XP]:\n```\n{task_text}\n```", 
-            parse_mode="Markdown"
-        )
-
-        # Выбор другой задачи для пользователя
-        cursor = db.cursor()
-        cursor.execute(
-            """
-            SELECT task_number, task_text
-            FROM tasks
-            WHERE status IN ('ожидает выполнения')
-            AND owner_id = %s
-            AND planned_date <= NOW()
-            AND task_number != %s
-            ORDER BY RANDOM()
-            LIMIT 1
-            """,
-            (user_id, task_number,)
-        )
-        new_task = cursor.fetchone()
-
-        if not new_task:
-            bot.send_message(
-                message.chat.id, 
-                "У тебя закончились задачи, придумайте новое дело."
-            )        
-            return
-        
-        new_task_number, new_task_text = new_task
-
-        cursor.execute(
-            "UPDATE tasks SET status = 'в работе', start_time = NOW() WHERE task_number = %s AND owner_id = %s", 
-            (new_task_number, user_id,)
-        )
-        cursor.close()        
-
-        bot.send_message(message.chat.id, 
-            f"Вот новое дело:\n```\n{new_task_text}\n```", 
-            parse_mode="Markdown"
-        )
-
-    except Exception as e:
-        bot.send_message(message.chat.id, f"Произошла ошибка: {e}\n{traceback.format_exc()}")
+    bot.send_message(message.chat.id, 
+        f"Вот новое дело:\n```\n{new_task_text}\n```", 
+        parse_mode="Markdown"
+    )
 
 
 @bot.message_handler(
@@ -842,35 +838,32 @@ def other_task(message):
         or message.text.lower().startswith("/удали")
         or message.text.lower().startswith("/delete")
 )
+@exception_handler
 def delete_task(message):
-    try:
-        match = re.search(r'(\d+)', message.text.lower())  # Поиск идентификатора дела
-        if match:
-            task_number = int(match.group(1))
-        else:
-            bot.send_message(
-                message.chat.id,
-                f"Не смог определить номер дела (его можно посмотреть командой /list или 'список')"
-            )
-            return
-        
-        cursor = db.cursor()
 
-        # Добавляем проверку owner_id из таблицы tasks, чтобы он соответствовал id
-        # текущего пользователя телеграм
-        cursor.execute("DELETE FROM tasks WHERE task_number = %s AND owner_id = %s", 
-                       (task_number, message.from_user.id))
-        # db.commit()
+    match = re.search(r'(\d+)', message.text.lower())  # Поиск идентификатора дела
+    if match:
+        task_number = int(match.group(1))
+    else:
+        bot.send_message(
+            message.chat.id,
+            f"Не смог определить номер дела (его можно посмотреть командой /list или 'список')"
+        )
+        return
+    
+    cursor = db.cursor()
 
-        # Закрываем соединение с базой данных
-        cursor.close()
+    # Добавляем проверку owner_id из таблицы tasks, чтобы он соответствовал id
+    # текущего пользователя телеграм
+    cursor.execute("DELETE FROM tasks WHERE task_number = %s AND owner_id = %s", 
+                    (task_number, message.from_user.id))
+    # db.commit()
 
-        # Отправляем сообщение об успешном удалении дела
-        bot.send_message(message.chat.id, f"Дело с номером {task_number} удалено.")
+    # Закрываем соединение с базой данных
+    cursor.close()
 
-    except Exception as e:
-        # Обработка ошибок
-        bot.send_message(message.chat.id, f"Произошла ошибка при удалении дела номер={task_number}: {e}")
+    # Отправляем сообщение об успешном удалении дела
+    bot.send_message(message.chat.id, f"Дело с номером {task_number} удалено.")
 
 
 
@@ -879,122 +872,110 @@ def delete_task(message):
         or message.text.lower().startswith("запланируй")
         or message.text.lower().startswith("/plan")
 )
+@exception_handler
 def delayed_task_msg(message):
-    # Добавляем отложенное дело, которое станет актуально начиная с даты
+    # Получение идентификатора пользователя из сообщения
+    user_id = message.from_user.id
+
+
     try:
-        # Получение идентификатора пользователя из сообщения
-        user_id = message.from_user.id
-
-
-        try:
-            command, date_str, *task_text_parts = message.text.split(maxsplit=2)
-            task_text = ' '.join(task_text_parts)
-            planned_date = parser.parse(date_str, dayfirst=True)
-        except Exception as e:
-            bot.send_message(
-                message.chat.id,
-                f"Не разобрал команду. Используй так /запланируй дд.мм.гггг текст_дела_которое_нужно_выполнить\n{e}"
-            )
-            return
-            
-
-        cursor = db.cursor()
-        cursor.execute(
-            "INSERT INTO tasks (owner_id, status, task_text, planned_date) VALUES (%s, %s, %s, %s)",
-            (user_id, 'ожидает выполнения', task_text, planned_date)
-        )
-        cursor.close()
-
-
-        update_score(user_id, 5) # +5XP
-       
-        formatted_date = planned_date.strftime("%d.%m.%Y")
-        days_until = (planned_date - datetime.now()).days
+        command, date_str, *task_text_parts = message.text.split(maxsplit=2)
+        task_text = ' '.join(task_text_parts)
+        planned_date = parser.parse(date_str, dayfirst=True)
+    except Exception as e:
         bot.send_message(
             message.chat.id,
-            f"Запланировал на 📆 {formatted_date} 👍 +5 XP:\n```\n{task_text}\n```\nчерез **{days_until} дней**",
-            parse_mode="Markdown"
+            f"Не разобрал команду. Используй так /запланируй дд.мм.гггг текст_дела_которое_нужно_выполнить\n{e}"
         )
+        return
+        
+
+    cursor = db.cursor()
+    cursor.execute(
+        "INSERT INTO tasks (owner_id, status, task_text, planned_date) VALUES (%s, %s, %s, %s)",
+        (user_id, 'ожидает выполнения', task_text, planned_date)
+    )
+    cursor.close()
 
 
-    except Exception as e:
-        bot.send_message(message.chat.id, f"Произошла ошибка: {e}")
-
+    update_score(user_id, 5) # +5XP
+    
+    formatted_date = planned_date.strftime("%d.%m.%Y")
+    days_until = (planned_date - datetime.now()).days
+    bot.send_message(
+        message.chat.id,
+        f"Запланировал на 📆 {formatted_date} 👍 +5 XP:\n```\n{task_text}\n```\nчерез **{days_until} дней**",
+        parse_mode="Markdown"
+    )
 
 
 # Идея: если отвечаем на текст с заданием, то это воспринимается как редактирование
     
 # Команда /edit 33 отредактированный текст задачи
 @bot.message_handler(commands=['edit'])
+@exception_handler
 def edit_msg(message):
-    try:        
-        match = re.search(r'(\d+)\s+(.+)', message.text)  # Поиск идентификатора дела
-        if match:
-            task_number = int(match.group(1))
-            task_text = match.group(2)
-        else:
-            bot.send_message(
-                message.chat.id,
-                f"Не смог определить номер дела (его можно посмотреть командой /list или 'список')"
-            )
-            return
-        
-        cursor = db.cursor()
 
-        # Выбор задачи со статусом "в работе"
-        cursor.execute(
-            """
-            SELECT
-                task_number, task_text
-            FROM tasks
-            WHERE status = 'ожидает выполнения' AND owner_id = %s AND task_number = %s
-            LIMIT 1
-            """,
-            (message.from_user.id, task_number)
-        )
-        row = cursor.fetchone()
-
-        if row:
-            task_number, src_task_text = row
-        else:
-            bot.send_message(message.chat.id, 
-                f"Не нашли дело с номером {task_number} в списке ожидающих."
-            )
-            return
-
-
-        # обновить дело новым текстом в таблице tasks, по колонке task_id и owner_id
-
-        cursor.execute(
-            "UPDATE tasks SET task_text = %s WHERE owner_id = %s AND task_number = %s",
-            (task_text, message.from_user.id, task_number)
-        )
-        cursor.close()
+    match = re.search(r'(\d+)\s+(.+)', message.text)  # Поиск идентификатора дела
+    if match:
+        task_number = int(match.group(1))
+        task_text = match.group(2)
+    else:
         bot.send_message(
             message.chat.id,
-            f"Отредактировано #{task_number}:\n```\nбыло: {src_task_text}\nстало: {task_text}\n```",
-            parse_mode="Markdown"
+            f"Не смог определить номер дела (его можно посмотреть командой /list или 'список')"
         )
-    except Exception as e:
-        bot.send_message(message.chat.id, f"Произошла ошибка: {e}")
-                                        
+        return
+    
+    cursor = db.cursor()
+
+    # Выбор задачи со статусом "в работе"
+    cursor.execute(
+        """
+        SELECT
+            task_number, task_text
+        FROM tasks
+        WHERE status = 'ожидает выполнения' AND owner_id = %s AND task_number = %s
+        LIMIT 1
+        """,
+        (message.from_user.id, task_number)
+    )
+    row = cursor.fetchone()
+
+    if row:
+        task_number, src_task_text = row
+    else:
+        bot.send_message(message.chat.id, 
+            f"Не нашли дело с номером {task_number} в списке ожидающих."
+        )
+        return
+
+
+    # обновить дело новым текстом в таблице tasks, по колонке task_id и owner_id
+
+    cursor.execute(
+        "UPDATE tasks SET task_text = %s WHERE owner_id = %s AND task_number = %s",
+        (task_text, message.from_user.id, task_number)
+    )
+    cursor.close()
+    bot.send_message(
+        message.chat.id,
+        f"Отредактировано #{task_number}:\n```\nбыло: {src_task_text}\nстало: {task_text}\n```",
+        parse_mode="Markdown"
+    )
 
 
 
 @bot.message_handler()
+@exception_handler
 def new_task_msg(message):
     # Добавляем дело
-    try:
+    add_task(message.chat.id, message.from_user.id, message.text, message.message_id)
 
-        add_task(message.chat.id, message.from_user.id, message.text, message.message_id)
-
-        with open("log.txt", "a", encoding="utf-8") as f:
-            f.write(f"{datetime.now().strftime('%d.%m.%Y %H:%M:%S')} msg: {message.text}\n")
-            f.write(str(message))
-            f.write(f"\n{pprint.pformat(message, indent=4)}\n")
-
-    except Exception as e:
-        bot.send_message(message.chat.id, f"Произошла ошибка: {e}")
+    with open("log.txt", "a", encoding="utf-8") as f:
+        f.write(f"{datetime.now().strftime('%d.%m.%Y %H:%M:%S')} msg: {message.text}\n")
+        f.write(str(message))
+        f.write(f"\n{pprint.pformat(message, indent=4)}\n")
 
 
 def add_task(chat_id, user_id, task_text, telegram_message_id):
@@ -1034,6 +1015,7 @@ def add_task(chat_id, user_id, task_text, telegram_message_id):
 from multiprocessing import Process
 
 @bot.message_handler(content_types=['voice'])
+@exception_handler
 def voice_msg(message):
     user_id = message.from_user.id
     file_info = bot.get_file(message.voice.file_id)
@@ -1083,6 +1065,7 @@ def process_voice(file_name: str, user_id, chat_id, message_id) -> None:
 
 
 @bot.edited_message_handler(content_types=['text'])
+@exception_handler
 def handle_edited_message(message):
 
     message_id = message.message_id

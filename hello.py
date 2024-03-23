@@ -9,6 +9,7 @@ from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
 import random
 from datetime import datetime
+import logging
 
 from config import TOKEN, DBCONN
 from middlewarebot import MiddlewareBot
@@ -95,6 +96,5 @@ for user in users():
                 """,
                 (datetime.now(), user['telegram_id'])
             )
-
-    current_datetime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-    print(f"{current_datetime}: {res}")
+    
+    logging.info(res)
