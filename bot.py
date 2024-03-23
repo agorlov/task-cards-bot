@@ -90,6 +90,7 @@ from middlewarebot import MiddlewareBot
 from faster_whisper import WhisperModel
 
 from src.started_task_controller import StartedTaskController
+from src.oai_embedding import SimilarTasks
 
 
 
@@ -1001,20 +1002,34 @@ def add_task(chat_id, user_id, task_text, telegram_message_id):
             planned_date
         ) 
         VALUES (%s,%s, %s, %s, NOW())
+        RETURNING task_number;
         """,
         (telegram_message_id, user_id, 'ожидает выполнения', task_text)
     )
+    
+    task_number = cursor.fetchone()[0]
+    cursor.close()
 
     update_score(user_id, 5) # +5XP
 
     bot.send_message(
         chat_id,
-        f"Записал 👍 +5 XP:\n```\n{task_text}\n```",
-        parse_mode="Markdown"
+        f"Записал #{task_number} 👍 +5 XP"
     )
 
     # Закрытие курсора и соединения с базой данных
     cursor.close()
+
+    # Поиск похожих
+    sim = SimilarTasks(db, user_id)
+    sim_list = sim.similar(task_text)
+
+    if sim_list:
+        tasks_str = '\n'.join([f"#{task_number} {task_text}" for task_number, task_text in sim_list])
+        bot.send_message(
+            chat_id,
+            f"🔎 Очень похожие задачи (удалить командой /delete номер):\n{tasks_str}"
+        )
 
 
 
