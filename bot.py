@@ -565,6 +565,28 @@ def pause_task(message):
     )
 
 
+def done_today(user_id):
+    """
+    Список завершенных задач за сегодня пользователем
+    """
+    cursor = db.cursor()
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    
+    cursor.execute(
+        """
+        SELECT
+            task_number, task_text, completion_comment
+        FROM tasks
+        WHERE owner_id = %s AND status = 'завершена' AND date(end_time) = %s
+        """,
+        (user_id, today)
+    )
+
+    return cursor.fetchall()
+
+
+
 def done_current_task(user_id, chat_id, completion_comment=None):
     """
     Отметить текущую задачу как выполненную и обновить баллы пользователя
@@ -606,9 +628,17 @@ def done_current_task(user_id, chat_id, completion_comment=None):
 
         time_taken = (end_time - start_time).total_seconds() / 60
 
-        # Отправьте пользователю сообщение о том, что задача была отложена
-        update_score(user_id, 15)
+        
+        today_count = len(done_today(user_id))
+        # если today_count делится на 3 (комбо из 3х задач), то увеличиваем баллы на 15
+        if today_count % 3:
+            bonus_str = "✨"
+            bonus = 15
+        else:
+            bonus_str = "✨3x КОМБО🚀" 
+            bonus = 30
 
+        update_score(user_id, bonus)
 
         # Кнопки:
         markup = types.InlineKeyboardMarkup(row_width=3)
@@ -620,7 +650,7 @@ def done_current_task(user_id, chat_id, completion_comment=None):
 
         bot.send_message(
             chat_id,
-            f"{done_compliment()} [✨ +15 XP], за {time_taken:.0f} мин",
+            f"{done_compliment()} [{bonus_str} +{bonus} XP], за {time_taken:.0f} мин",
             parse_mode="Markdown",
             reply_markup=markup
         )
