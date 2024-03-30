@@ -662,7 +662,6 @@ def done_current_task(user_id, chat_id, completion_comment=None):
         )
 
 
-
 # завершить задачу
 @bot.message_handler(
         func=lambda message: message.text.lower().startswith("готово")
@@ -996,7 +995,7 @@ def edit_msg(message):
     # обновить дело новым текстом в таблице tasks, по колонке task_id и owner_id
 
     cursor.execute(
-        "UPDATE tasks SET task_text = %s WHERE owner_id = %s AND task_number = %s",
+        "UPDATE tasks SET task_text = %s, embedding=NULL WHERE owner_id = %s AND task_number = %s",
         (task_text, message.from_user.id, task_number)
     )
     cursor.close()
@@ -1123,7 +1122,7 @@ def handle_edited_message(message):
     # обновить дело новым текстом в таблице tasks, по колонке task_id и owner_id
     cursor = db.cursor()
     cursor.execute(
-        "UPDATE tasks SET task_text = %s WHERE owner_id = %s AND telegram_message_id = %s",
+        "UPDATE tasks SET task_text = %s, embedding=NULL WHERE owner_id = %s AND telegram_message_id = %s",
         (message.text, message.from_user.id, message_id)
     )
     cursor.close()
