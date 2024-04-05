@@ -90,7 +90,8 @@ from middlewarebot import MiddlewareBot
 from faster_whisper import WhisperModel
 
 from src.started_task_controller import StartedTaskController
-from src.oai_embedding import SimilarTasks
+from src.similar_tasks import SimilarTasks
+from src.oai_embedding import OAIEmbedding
 
 
 
@@ -363,6 +364,7 @@ def task_list(message):
 
     # Формирование сообщения с списком задач        
     response = f"Что хотелось бы сделать ({len(tasks)}):\n"
+    response_prev = f""
     for task in tasks:
         task_number, task_text, status, creation_time, planned_date = task
         creation_time = creation_time.strftime("%d.%m.%Y %H:%M:%S")            
@@ -377,6 +379,20 @@ def task_list(message):
 
         if planned_date > datetime.now():
             response += f"    📆 на {planned_date.strftime('%d.%m.%Y')}\n"
+        
+        # Если заданий больше, чем на 4кб - телеграм будет ругаться, ограничим список задач до 4кб
+        if len(response) > 3800 and len(response) < 3950:
+            tasks_left = len(tasks) - tasks.index(task) - 1
+            response += f"в списке ещё дел: {tasks_left} шт." #, показать их /list {tasks.index(task)}
+            break;
+        elif len(response) > 3950:
+            tasks_left = len(tasks) - tasks.index(task)
+            response_prev += f"в списке ещё дел: {tasks_left} шт." #, показать их /list {tasks.index(task)}
+            response = response_prev
+            break;
+        else:
+            response_prev = response
+
 
     response += f"\n[🏆 <b>{score} XP</b>]"
 

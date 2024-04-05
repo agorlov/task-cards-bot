@@ -10,7 +10,7 @@ from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 import logging
 
 from config import DBCONN
-from src.oai_embedding import UpdatedEmbeddings
+from src.updated_embeddings import UpdatedEmbeddings
 
 # Настройка базовой конфигурации логирования
 logging.basicConfig(filename='app.log',  # Указываем файл для записи логов
