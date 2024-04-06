@@ -92,6 +92,7 @@ from faster_whisper import WhisperModel
 from src.started_task_controller import StartedTaskController
 from src.similar_tasks import SimilarTasks
 from src.oai_embedding import OAIEmbedding
+from src.task import Task
 
 
 
@@ -217,7 +218,7 @@ def exception_handler(func):
         except Exception as e:
             short_uuid = str(uuid.uuid4())[:6]
             logging.error(
-                "%s ошибка '%s': %s",
+                "%s ошибка [msg] '%s': %s",
                 short_uuid,
                 func.__name__,
                 str(e),
@@ -228,6 +229,30 @@ def exception_handler(func):
                 f"Произошла ошибка. Попробуйте повторно, либо напишите @agorlov\nid={short_uuid}"
             )
     return wrapper
+
+def exception_btn_handler(func):
+    """
+    Декоратор для логирования ошибок в обработчиках команд.
+    """
+    @wraps(func)
+    def wrapper(call):
+        try:
+            return func(call)
+        except Exception as e:
+            short_uuid = str(uuid.uuid4())[:6]
+            logging.error(
+                "%s ошибка [btn] '%s': %s",
+                short_uuid,
+                func.__name__,
+                str(e),
+                exc_info=True
+            )
+            bot.send_message(
+                call.message.chat.id,
+                f"Произошла ошибка. Попробуйте повторно, либо напишите @agorlov\nid={short_uuid}"
+            )
+    return wrapper
+
 
 
 # Функция для добавления нового пользователя в базу данных
@@ -383,11 +408,11 @@ def task_list(message):
         # Если заданий больше, чем на 4кб - телеграм будет ругаться, ограничим список задач до 4кб
         if len(response) > 3800 and len(response) < 3950:
             tasks_left = len(tasks) - tasks.index(task) - 1
-            response += f"в списке ещё дел: {tasks_left} шт." #, показать их /list {tasks.index(task)}
+            response += f"\n\n...в списке ещё дел: {tasks_left} шт."
             break;
         elif len(response) > 3950:
             tasks_left = len(tasks) - tasks.index(task)
-            response_prev += f"в списке ещё дел: {tasks_left} шт." #, показать их /list {tasks.index(task)}
+            response_prev += f"\n\n...в списке ещё дел: {tasks_left} шт."
             response = response_prev
             break;
         else:
@@ -444,6 +469,7 @@ def done_list(message):
         # Формирование сообщения с списком задач
         current_date = None
         response = ""
+        response_prev = ""
         for task in tasks:
             task_number, task_text, creation_time, start_time, end_time, comment = task
 
@@ -461,12 +487,19 @@ def done_list(message):
             💬 {comment}
             """
 
+            # Если заданий больше, чем на 4кб - телеграм будет ругаться, ограничим список задач до 4кб
+            if len(response) > 3800 and len(response) < 3950:
+                tasks_left = len(tasks) - tasks.index(task) - 1
+                response += f"\n\n...в списке ещё дел: {tasks_left} шт."
+                break;
+            elif len(response) > 3950:
+                tasks_left = len(tasks) - tasks.index(task)
+                response_prev += f"\n\n...в списке ещё дел: {tasks_left} шт."
+                response = response_prev
+                break;
+            else:
+                response_prev = response
 
-    # Отправка сообщения с списком задач пользователю
-    if len(response) > 4096:
-        for x in range(0, len(response), 4096):
-            bot.send_message(message.chat.id, response[x:x+4096], parse_mode="HTML")
-    else:
         bot.send_message(message.chat.id, response, parse_mode="HTML")
 
 
@@ -536,17 +569,41 @@ def postpone_task(message):
         or message.text.lower() == "/pause"
 )
 @exception_handler
-def pause_task(message):
+def pause_task(message):   
+    pause_controller(message.from_user.id, message.chat.id)
+
+
+def pause_controller(user_id, chat_id):
+    task = pause_task_for_user(user_id)
+
+
+    if not task:
+        bot.send_message(chat_id, "В данный момент нет задач 'в работе' нет.")
+        return
+
+    task_arr = task.task()
+
+    # Отправьте пользователю сообщение о том, что задача была отложена
+    bot.send_message(
+        chat_id,
+        f"На паузе:\n```\n{task_arr['task_text']}\n```",
+        parse_mode="Markdown"
+    )
+
+
+
+def pause_task_for_user(user_id):
+    """
+    Поставить задачу на паузу
+
+    Найти задачу в работе, поставить её на паузу и вернуть Task
+    а если задачи нет, вернуть None
+    """
 
     cursor = db.cursor()
-
-    user_id = message.from_user.id
-
-    # Выбор задачи со статусом "в работе"
     cursor.execute(
         """
-        SELECT
-            task_number, task_text
+        SELECT task_number
         FROM tasks
         WHERE status = 'в работе' AND owner_id = %s
         LIMIT 1
@@ -554,14 +611,11 @@ def pause_task(message):
         (user_id,)
     )
     row = cursor.fetchone()
-
+    
     if not row:
-        bot.send_message(message.chat.id, "В данный момент нет задач 'в работе' нет.")
-        return
-
-    task_number, task_text = row
-
-    # Обновление записи задачи в базе данных
+        return None
+    
+    # Обновление записи задачи в базе данных - поставить на паузу
     cursor.execute(
         """
         UPDATE tasks
@@ -569,17 +623,11 @@ def pause_task(message):
             start_time = NULL
         WHERE task_number = %s AND owner_id = %s
         """,
-        (task_number, user_id,)
+        (row[0], user_id,)
     )
     cursor.close()
 
-    # Отправьте пользователю сообщение о том, что задача была отложена
-    bot.send_message(
-        message.chat.id,
-        f"На паузе:\n```\n{task_text}\n```",
-        parse_mode="Markdown"
-    )
-
+    return Task(row[0], user_id, db)
 
 def done_today(user_id):
     """
@@ -707,6 +755,7 @@ def done_task(message):
 
 
 @bot.callback_query_handler(func=lambda call: call.data == 'new_task')
+@exception_btn_handler
 def btn_answer_new_task(call):   
     try:
         bot.answer_callback_query(callback_query_id=call.id, text="Ок, минутку..")
@@ -717,6 +766,7 @@ def btn_answer_new_task(call):
             call.from_user.id
         )
         started_task.startTask()
+        bot.answer_callback_query(call.id)
     except Exception as e:
         bot.send_message(
             call.message.chat.id, 
@@ -724,6 +774,7 @@ def btn_answer_new_task(call):
         )
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('plan_task'))
+@exception_btn_handler
 def btn_answer_plan_task(call):
     try:
         # Получение идентификатора пользователя из сообщения
@@ -749,7 +800,6 @@ def btn_answer_plan_task(call):
         )
         cursor.close()
 
-
         update_score(user_id, 5) # +5XP
        
         bot.send_message(
@@ -760,8 +810,9 @@ def btn_answer_plan_task(call):
 
         # Сохраним эмбеддинг для задачи (смысловое пространство, для поиска похожих задач)
         task_emb = OAIEmbedding()
-        task_emb.save_for_task(self, task_id, user_id, task_text, db)
+        task_emb.save_for_task(task_id, user_id, task_text, db)
 
+        bot.answer_callback_query(call.id)
     except Exception as e:
         bot.send_message(
             call.message.chat.id, 
@@ -786,11 +837,25 @@ def start_task(message):
     started_task.startTask()
 
 @bot.callback_query_handler(func=lambda call: call.data == 'done_task_btn')
+@exception_btn_handler
 def btn_done_task(call):
     """
     Кнопка Готово задачи
     """
     done_current_task(call.from_user.id, call.message.chat.id)
+
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data == 'pause_task_btn')
+@exception_btn_handler
+def btn_pause_task(call):
+    """
+    Кнопка продолжить позже (ставит на паузу)
+    """
+    pause_controller(call.from_user.id, call.message.chat.id)
+
+    bot.answer_callback_query(call.id)
+    
 
 
 @bot.message_handler(

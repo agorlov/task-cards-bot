@@ -93,15 +93,20 @@ class StartedTaskController:
             (task_number, self.user_id,)
         )
         cursor.close()
+        
 
         # Кнопка готово, с действием соответствующим команде /done
         reply_markup = types.InlineKeyboardMarkup()
-        reply_markup.add(
+        reply_markup.row(
             types.InlineKeyboardButton(
-                "Готово",
+                "✅ Готово",
                 callback_data=f"done_task_btn"
+            ),
+            types.InlineKeyboardButton(
+                "⏸️ Продолжить позже",
+                callback_data=f"pause_task_btn"
             )
-        )
+        )        
         
         bot.send_message(
             self.chat_id,
