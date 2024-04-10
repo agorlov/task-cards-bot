@@ -75,11 +75,10 @@ from dateutil import parser
 import uuid
 
 import logging
-import random
 import re
 import traceback
-import pprint
 from functools import wraps
+import json
 
 from config import TOKEN, DBCONN
 from middlewarebot import MiddlewareBot
@@ -92,7 +91,10 @@ from faster_whisper import WhisperModel
 from src.started_task_controller import StartedTaskController
 from src.similar_tasks import SimilarTasks
 from src.oai_embedding import OAIEmbedding
+from src.oai_taskmeta import OAITaskMeta
 from src.task import Task
+from src.added_user import AddedUser
+from src.done_compliment import DoneCompliment
 
 
 
@@ -190,7 +192,8 @@ def my_middleware_handler(message):
     Perform your actions here, e.g., logging the message
     Сохраним пользователя и время его последней активности:
     """
-    add_user_to_db(message.from_user)
+
+    AddedUser(message.from_user, db).add_user()
 
     # Вывод в лог с датой и временем
     user_id = message.from_user.id
@@ -205,6 +208,8 @@ def my_middleware_handler(message):
 
 # Register the middleware function
 bot.middleware_handler(my_middleware_handler)
+
+
 
 
 def exception_handler(func):
@@ -255,47 +260,26 @@ def exception_btn_handler(func):
 
 
 
-# Функция для добавления нового пользователя в базу данных
-def add_user_to_db(user):
-    cursor = db.cursor()
-
-    # Проверка, существует ли пользователь в базе данных
-    cursor.execute("SELECT telegram_id FROM users WHERE telegram_id = %s", (user.id,))
-    existing_user = cursor.fetchone()
-
-    if not existing_user:
-        # Добавление нового пользователя
-        cursor.execute(
-            "INSERT INTO users (telegram_id, username, firstname, lastname) VALUES (%s, %s, %s, %s)",
-            (user.id, user.username, user.first_name, user.last_name))
-    else:
-        # Обновление информации и lastmessage_time для существующего пользователя
-        cursor.execute("UPDATE users SET lastmessage = NOW() WHERE telegram_id = %s", (user.id,))
-
-    cursor.close()
-
-
-
-def done_compliment():
-    # Похвалить за завершенное дело
-    compliments = [
-        "Отличная работа! 👍",
-        "Молодец! 👏",
-        "Прекрасно! 💯",
-        "Фантастически! 🌟",
-        "Великолепно! ✨",
-        "Впечатляюще! 🤩",
-        "Браво! 👌",
-        "Так держать! 💪",
-        "Спасибо! 🙌",
-        "Благодарю за труд! 🎉",
-        "Отлично! 🎉",
-        "Возьми 5-10 минут релакса",
-        "Потрудился - расслабься, это поддержит энергию! 🔋⚡️😌",
-        "Сделал дело - гуляй смело! 🏃‍♂️🍃",
-        "А ты давно пил воду? Учерные рекомендуют 7-8 стаканов чистой воды в день. 🌊",
-    ]
-    return random.choice(compliments)
+# def done_compliment():
+#     # Похвалить за завершенное дело
+#     compliments = [
+#         "Отличная работа! 👍",
+#         "Молодец! 👏",
+#         "Прекрасно! 💯",
+#         "Фантастически! 🌟",
+#         "Великолепно! ✨",
+#         "Впечатляюще! 🤩",
+#         "Браво! 👌",
+#         "Так держать! 💪",
+#         "Спасибо! 🙌",
+#         "Благодарю за труд! 🎉",
+#         "Отлично! 🎉",
+#         "Возьми 5-10 минут релакса",
+#         "Потрудился - расслабься, это поддержит энергию! 🔋⚡️😌",
+#         "Сделал дело - гуляй смело! 🏃‍♂️🍃",
+#         "А ты давно пил воду? Учерные рекомендуют 7-8 стаканов чистой воды в день. 🌊",
+#     ]
+#     return random.choice(compliments)
 
 def update_score(user_id, points):
     # Начисление очков за выполнение дела или за другие действия
@@ -712,9 +696,11 @@ def done_current_task(user_id, chat_id, completion_comment=None):
         )
         markup.add(btn1, btn2)
 
+        done_compliment = DoneCompliment().compliment()
+
         bot.send_message(
             chat_id,
-            f"{done_compliment()} [{bonus_str} +{bonus} XP], за {time_taken:.0f} мин",
+            f"{done_compliment} [{bonus_str} +{bonus} XP], за {time_taken:.0f} мин",
             parse_mode="Markdown",
             reply_markup=markup
         )
@@ -1009,9 +995,15 @@ def delayed_task_msg(message):
 
     cursor = db.cursor()
     cursor.execute(
-        "INSERT INTO tasks (owner_id, status, task_text, planned_date) VALUES (%s, %s, %s, %s)",
+        """
+        INSERT INTO tasks (owner_id, status, task_text, planned_date)
+        VALUES (%s, %s, %s, %s)
+        RETURNING task_number
+        """,
         (user_id, 'ожидает выполнения', task_text, planned_date)
     )
+
+    task_id = cursor.fetchone()[0]
     cursor.close()
 
 
@@ -1027,7 +1019,7 @@ def delayed_task_msg(message):
 
     # Сохраним эмбеддинг для задачи (смысловое пространство, для поиска похожих задач)
     task_emb = OAIEmbedding()
-    task_emb.save_for_task(self, task_id, user_id, task_text, db)
+    task_emb.save_for_task(task_id, user_id, task_text, db)
 
 
 
@@ -1091,8 +1083,30 @@ def edit_msg(message):
 @bot.message_handler()
 @exception_handler
 def new_task_msg(message):
-    # Добавляем дело
-    add_task(message.chat.id, message.from_user.id, message.text, message.message_id)
+    try:
+        # Прочитаем дело с помощью LLM, на пердмет отложенности
+        llm_meta = OAITaskMeta(message.text)
+        meta = llm_meta.meta()
+        # для отладки отправим пользователю мета-информацию
+        bot.send_message(
+            message.chat.id,
+            f"Мета-информация:\n```\n{json.dumps(meta, indent=2)}\n```",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        meta = {}
+        logging.error(
+            "При обращении к llm произошла ошибка: %s", str(e),
+            exc_info=True
+        )
+    
+    if 'date' in meta and meta['date']:
+        message.text = f"/plan {meta['date']} {meta['task_text_without_date']}"
+        delayed_task_msg(message)
+    else:
+        # Добавляем дело
+        add_task(message.chat.id, message.from_user.id, message.text, message.message_id)
+
 
 
 def add_task(chat_id, user_id, task_text, telegram_message_id):
