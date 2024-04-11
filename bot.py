@@ -64,7 +64,7 @@ XP - генерировать на неделю
 """
 
 from telebot import types
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup
 
 
 import psycopg2
@@ -259,28 +259,6 @@ def exception_btn_handler(func):
     return wrapper
 
 
-
-# def done_compliment():
-#     # Похвалить за завершенное дело
-#     compliments = [
-#         "Отличная работа! 👍",
-#         "Молодец! 👏",
-#         "Прекрасно! 💯",
-#         "Фантастически! 🌟",
-#         "Великолепно! ✨",
-#         "Впечатляюще! 🤩",
-#         "Браво! 👌",
-#         "Так держать! 💪",
-#         "Спасибо! 🙌",
-#         "Благодарю за труд! 🎉",
-#         "Отлично! 🎉",
-#         "Возьми 5-10 минут релакса",
-#         "Потрудился - расслабься, это поддержит энергию! 🔋⚡️😌",
-#         "Сделал дело - гуляй смело! 🏃‍♂️🍃",
-#         "А ты давно пил воду? Учерные рекомендуют 7-8 стаканов чистой воды в день. 🌊",
-#     ]
-#     return random.choice(compliments)
-
 def update_score(user_id, points):
     # Начисление очков за выполнение дела или за другие действия
     try:
@@ -304,11 +282,27 @@ def user_score(user_id):
     else:
         return 0  # Default score if user not found
 
+def basic_keyboard():
+    """
+    Клавиатура с кнопками "Взять дело", "Список дел", "Архив"
+    """
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    item1 = types.KeyboardButton("Взять дело")
+    item2 = types.KeyboardButton("Список дел")
+    item3 = types.KeyboardButton("Архив")
+    markup.add(item1, item2, item3)
+    return markup
 
 @bot.message_handler(commands=['start'])
 @exception_handler
 def start_msg(message):
-    bot.send_message(message.chat.id, help_message, parse_mode="Markdown")    
+
+    bot.send_message(
+        message.chat.id,
+        help_message,
+        parse_mode="Markdown",
+        reply_markup=basic_keyboard()
+    )
 
 
 @bot.message_handler(
@@ -322,18 +316,29 @@ def help_msg(message):
     """
     Обработка команды /help
     """
-    bot.send_message(message.chat.id, help_message, parse_mode="Markdown")
+    bot.send_message(
+        message.chat.id,
+        help_message,
+        parse_mode="Markdown",
+        reply_markup=basic_keyboard()
+    )
 
 @bot.message_handler(commands=['help2'])
 @exception_handler
 def start_msg(message):
-    bot.send_message(message.chat.id, help_advanced, parse_mode="Markdown")    
+    bot.send_message(
+        message.chat.id,
+        help_advanced,
+        parse_mode="Markdown",
+        reply_markup=basic_keyboard()
+    )
 
 
 
 # Список
 @bot.message_handler(
     func=lambda message: message.text.lower() == "список"
+    or message.text.lower() == "список дел"
     or message.text.lower() == "/список"
     or message.text.lower() == "/list"
     or message.text.lower() == "list"
@@ -407,7 +412,12 @@ def task_list(message):
 
 
     # Отправка сообщения с списком задач пользователю
-    bot.send_message(message.chat.id, response, parse_mode="HTML")
+    bot.send_message(
+        message.chat.id,
+        response,
+        parse_mode="HTML",
+        reply_markup=basic_keyboard()
+    )
 
 
 
@@ -484,7 +494,12 @@ def done_list(message):
             else:
                 response_prev = response
 
-        bot.send_message(message.chat.id, response, parse_mode="HTML")
+        bot.send_message(
+            message.chat.id,
+            response,
+            parse_mode="HTML",
+            reply_markup=basic_keyboard()
+        )
 
 
 
@@ -537,12 +552,14 @@ def postpone_task(message):
         # Отправьте пользователю сообщение о том, что задача была отложена
         bot.send_message(message.chat.id, 
             f"Отложена [😳 -5 XP]:\n```\n{task_text}\n```", 
-            parse_mode="Markdown"
+            parse_mode="Markdown",
+            reply_markup=basic_keyboard()
         )
 
     else:
         bot.send_message(message.chat.id, 
-            "В данный момент нет задач 'в работе' нет."
+            "В данный момент нет задач 'в работе' нет.",
+            reply_markup=basic_keyboard()
         )
 
 
@@ -562,7 +579,7 @@ def pause_controller(user_id, chat_id):
 
 
     if not task:
-        bot.send_message(chat_id, "В данный момент нет задач 'в работе' нет.")
+        bot.send_message(chat_id, "В данный момент нет задач 'в работе' нет.", reply_markup=basic_keyboard())
         return
 
     task_arr = task.task()
@@ -571,7 +588,8 @@ def pause_controller(user_id, chat_id):
     bot.send_message(
         chat_id,
         f"На паузе:\n```\n{task_arr['task_text']}\n```",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=basic_keyboard()
     )
 
 
@@ -708,7 +726,8 @@ def done_current_task(user_id, chat_id, completion_comment=None):
     else:
         bot.send_message(
             chat_id,
-            "В данный момент в работе задач нет, показать список? /list"
+            "В данный момент в работе задач нет, показать список? /list",
+            reply_markup=basic_keyboard()
         )
 
 
@@ -743,75 +762,64 @@ def done_task(message):
 @bot.callback_query_handler(func=lambda call: call.data == 'new_task')
 @exception_btn_handler
 def btn_answer_new_task(call):   
-    try:
-        bot.answer_callback_query(callback_query_id=call.id, text="Ок, минутку..")
-        started_task = StartedTaskController(
-            db,
-            bot,
-            call.message.chat.id,
-            call.from_user.id
-        )
-        started_task.startTask()
-        bot.answer_callback_query(call.id)
-    except Exception as e:
-        bot.send_message(
-            call.message.chat.id, 
-            f"Произошла ошибка при выполнении команды 'дело': {e}\n{traceback.format_exc()}"
-        )
+    bot.answer_callback_query(callback_query_id=call.id, text="Ок, минутку..")
+    started_task = StartedTaskController(
+        db,
+        bot,
+        call.message.chat.id,
+        call.from_user.id
+    )
+    started_task.startTask()
+    bot.answer_callback_query(call.id)
+
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('plan_task'))
 @exception_btn_handler
 def btn_answer_plan_task(call):
-    try:
-        # Получение идентификатора пользователя из сообщения
-        user_id = call.from_user.id
+    # Получение идентификатора пользователя из сообщения
+    user_id = call.from_user.id
 
-        planned_date = datetime.now() + timedelta(days=1)
-        task_id = call.data.split('_')[2]
+    planned_date = datetime.now() + timedelta(days=1)
+    task_id = call.data.split('_')[2]
 
-        # Получить задачу с task_id
-        cursor = db.cursor()
-        cursor.execute(
-            "SELECT task_text FROM tasks WHERE task_number = %s AND owner_id = %s",
-            (task_id, user_id)
-        )
-        task_text = cursor.fetchone()[0]
-        cursor.close()
+    # Получить задачу с task_id
+    cursor = db.cursor()
+    cursor.execute(
+        "SELECT task_text FROM tasks WHERE task_number = %s AND owner_id = %s",
+        (task_id, user_id)
+    )
+    task_text = cursor.fetchone()[0]
+    cursor.close()
+    
+    cursor = db.cursor()
+    cursor.execute(
+        "INSERT INTO tasks (owner_id, status, task_text, planned_date) VALUES (%s, %s, %s, %s)",
+        (user_id, 'ожидает выполнения', task_text, planned_date.strftime("%Y-%m-%d %H:%M:%S"))
         
-        cursor = db.cursor()
-        cursor.execute(
-            "INSERT INTO tasks (owner_id, status, task_text, planned_date) VALUES (%s, %s, %s, %s)",
-            (user_id, 'ожидает выполнения', task_text, planned_date.strftime("%Y-%m-%d %H:%M:%S"))
-            
-        )
-        cursor.close()
+    )
+    cursor.close()
 
-        update_score(user_id, 5) # +5XP
-       
-        bot.send_message(
-            call.message.chat.id,
-            f"Готово 👍 +5 XP:\n```\n{task_text}\n```",
-            parse_mode="Markdown"
-        )
+    update_score(user_id, 5) # +5XP
+    
+    bot.send_message(
+        call.message.chat.id,
+        f"Готово 👍 +5 XP:\n```\n{task_text}\n```",
+        parse_mode="Markdown",
+        reply_markup=basic_keyboard()
+    )
 
-        # Сохраним эмбеддинг для задачи (смысловое пространство, для поиска похожих задач)
-        task_emb = OAIEmbedding()
-        task_emb.save_for_task(task_id, user_id, task_text, db)
+    # Сохраним эмбеддинг для задачи (смысловое пространство, для поиска похожих задач)
+    task_emb = OAIEmbedding()
+    task_emb.save_for_task(task_id, user_id, task_text, db)
 
-        bot.answer_callback_query(call.id)
-    except Exception as e:
-        bot.send_message(
-            call.message.chat.id, 
-            f"Произошла ошибка при выполнении команды 'дело': {e}\n{traceback.format_exc()}"
-        )
-
-
+    bot.answer_callback_query(call.id)
 
 
 
 # взять задачу (или продолжить задачу, если есть какая-то на паузе)
 @bot.message_handler(
-    func=lambda message: message.text.lower() == "дело" 
+    func=lambda message: message.text.lower() == "дело"
+    or message.text.lower() == "взять дело" 
     or message.text.lower().startswith("/дело")
     or message.text.lower() == "/task"
     or message.text.lower() == "/продолжить"
@@ -966,7 +974,7 @@ def delete_task(message):
     cursor.close()
 
     # Отправляем сообщение об успешном удалении дела
-    bot.send_message(message.chat.id, f"Дело с номером {task_number} удалено.")
+    bot.send_message(message.chat.id, f"Дело с номером {task_number} удалено.", reply_markup=basic_keyboard())
 
 
 
@@ -1014,7 +1022,8 @@ def delayed_task_msg(message):
     bot.send_message(
         message.chat.id,
         f"Запланировал на 📆 {formatted_date} 👍 +5 XP:\n```\n{task_text}\n```\nчерез **{days_until} дней**",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=basic_keyboard()
     )
 
     # Сохраним эмбеддинг для задачи (смысловое пространство, для поиска похожих задач)
@@ -1037,7 +1046,8 @@ def edit_msg(message):
     else:
         bot.send_message(
             message.chat.id,
-            f"Не смог определить номер дела (его можно посмотреть командой /list или 'список')"
+            f"Не смог определить номер дела (его можно посмотреть командой /list или 'список')",
+            reply_markup=basic_keyboard()            
         )
         return
     
@@ -1059,8 +1069,10 @@ def edit_msg(message):
     if row:
         task_number, src_task_text = row
     else:
-        bot.send_message(message.chat.id, 
-            f"Не нашли дело с номером {task_number} в списке ожидающих."
+        bot.send_message(
+            message.chat.id, 
+            f"Не нашли дело с номером {task_number} в списке ожидающих.",
+            reply_markup=basic_keyboard()
         )
         return
 
@@ -1075,7 +1087,7 @@ def edit_msg(message):
     bot.send_message(
         message.chat.id,
         f"Отредактировано #{task_number}:\n```\nбыло: {src_task_text}\nстало: {task_text}\n```",
-        parse_mode="Markdown"
+        parse_mode="Markdown", reply_markup=basic_keyboard()
     )
 
 
@@ -1091,7 +1103,8 @@ def new_task_msg(message):
         bot.send_message(
             message.chat.id,
             f"Мета-информация:\n```\n{json.dumps(meta, indent=2)}\n```",
-            parse_mode="Markdown"
+            parse_mode="Markdown",
+            reply_markup=basic_keyboard()
         )
     except Exception as e:
         meta = {}
@@ -1138,7 +1151,8 @@ def add_task(chat_id, user_id, task_text, telegram_message_id):
 
     bot.send_message(
         chat_id,
-        f"Записал #{task_number} 👍 +5 XP"
+        f"Записал #{task_number} 👍 +5 XP",
+        reply_markup=basic_keyboard()
     )
 
     # Закрытие курсора и соединения с базой данных
@@ -1152,7 +1166,8 @@ def add_task(chat_id, user_id, task_text, telegram_message_id):
         tasks_str = '\n'.join([f"#{task_number} {task_text}" for task_number, task_text in sim_list])
         bot.send_message(
             chat_id,
-            f"🔎 Очень похожие задачи (удалить командой /delete номер):\n{tasks_str}"
+            f"🔎 Очень похожие задачи (удалить командой /delete номер):\n{tasks_str}",
+            reply_markup=basic_keyboard()
         )
 
 
@@ -1168,7 +1183,11 @@ def voice_msg(message):
     with open(f"voice_task_{user_id}.ogg", 'wb') as new_file:
         new_file.write(downloaded_file)
     
-    bot.send_message(message.chat.id, f"Voice принят, обрабатываю... (займет 15-20 секунд) 🎙")
+    bot.send_message(
+        message.chat.id,
+        f"Voice принят, обрабатываю... (займет 15-20 секунд) 🎙",
+        reply_markup=basic_keyboard()
+    )
 
     p = Process(
         target=process_voice,
@@ -1196,18 +1215,6 @@ def process_voice(file_name: str, user_id, chat_id, message_id) -> None:
 
     add_task(chat_id, user_id, "🎤 " + task_text, message_id)
 
-    print("Обработка войса в process_voice завершена")
-
-# library: whispercpp (git+https://github.com/agorlov/whispercpp.py)
-# def process_voice(file_name, user_id):
-#     print("Обработка войса в process_voice...")
-#     # w = Whisper('small')
-#     w = Whisper('small-q5_0')
-#     result = w.transcribe(file_name)
-#     text = w.extract_text(result)
-#     bot.send_message(user_id, f"```{text}```")
-#     print("Обработка войса в process_voice завершена")
-
 
 @bot.edited_message_handler(content_types=['text'])
 @exception_handler
@@ -1224,7 +1231,8 @@ def handle_edited_message(message):
     bot.send_message(
         message.chat.id,
         f"Отредактировано:\n```\n{message.text}\n```",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=basic_keyboard()
     )
 
 
