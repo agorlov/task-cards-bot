@@ -63,12 +63,7 @@ XP - генерировать на неделю
 
 """
 
-from telebot import types
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup
-
-
 import psycopg2
-from psycopg2.extras import DictCursor
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 from datetime import datetime, timedelta
 from dateutil import parser
@@ -76,7 +71,6 @@ import uuid
 
 import logging
 import re
-import traceback
 from functools import wraps
 import json
 
@@ -94,7 +88,9 @@ from src.oai_embedding import OAIEmbedding
 from src.oai_taskmeta import OAITaskMeta
 from src.task import Task
 from src.added_user import AddedUser
-from src.done_compliment import DoneCompliment
+from src.user_score import UserScore
+from src.basic_keyboard import BasicKeyboard
+from src.done_task import DoneTask
 
 
 
@@ -231,7 +227,7 @@ def exception_handler(func):
             )
             bot.send_message(
                 message.chat.id,
-                f"Произошла ошибка. Попробуйте повторно, либо напишите @agorlov\nid={short_uuid}"
+                f"Произошла ошибка {short_uuid}. Попробуйте повторно, либо напишите @agorlov"
             )
     return wrapper
 
@@ -259,40 +255,6 @@ def exception_btn_handler(func):
     return wrapper
 
 
-def update_score(user_id, points):
-    # Начисление очков за выполнение дела или за другие действия
-    try:
-        cursor = db.cursor()
-        cursor.execute(
-            "UPDATE users SET karma_score = karma_score + %s WHERE telegram_id = %s",
-            (points, user_id)
-        )
-        cursor.close()
-    except Exception as e:
-        print(f"Ошибка начисления очков: {e}")
-
-def user_score(user_id):
-    # Скор пользователя
-    cursor = db.cursor()
-    cursor.execute("SELECT karma_score FROM users WHERE telegram_id = %s", (user_id,))
-    result = cursor.fetchone()
-    cursor.close()
-    if result:
-        return result[0]
-    else:
-        return 0  # Default score if user not found
-
-def basic_keyboard():
-    """
-    Клавиатура с кнопками "Взять дело", "Список дел", "Архив"
-    """
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    item1 = types.KeyboardButton("Взять дело")
-    item2 = types.KeyboardButton("Список дел")
-    item3 = types.KeyboardButton("Архив")
-    markup.add(item1, item2, item3)
-    return markup
-
 @bot.message_handler(commands=['start'])
 @exception_handler
 def start_msg(message):
@@ -301,7 +263,7 @@ def start_msg(message):
         message.chat.id,
         help_message,
         parse_mode="Markdown",
-        reply_markup=basic_keyboard()
+        reply_markup=BasicKeyboard().menu()
     )
 
 
@@ -320,7 +282,7 @@ def help_msg(message):
         message.chat.id,
         help_message,
         parse_mode="Markdown",
-        reply_markup=basic_keyboard()
+        reply_markup=BasicKeyboard().menu()
     )
 
 @bot.message_handler(commands=['help2'])
@@ -330,7 +292,7 @@ def start_msg(message):
         message.chat.id,
         help_advanced,
         parse_mode="Markdown",
-        reply_markup=basic_keyboard()
+        reply_markup=BasicKeyboard().menu()
     )
 
 
@@ -369,7 +331,7 @@ def task_list(message):
     tasks = cursor.fetchall()
     cursor.close()
 
-    score = user_score(user_id)
+    score = UserScore(user_id, db).user_score()
 
     if not tasks:
         response = "В твоем списке нет дел... А может ты уже все сделал?\nЧтобы добавить новое дело, просто напиши его сообщением и оно добавится в список!"
@@ -416,7 +378,7 @@ def task_list(message):
         message.chat.id,
         response,
         parse_mode="HTML",
-        reply_markup=basic_keyboard()
+        reply_markup=BasicKeyboard().menu()
     )
 
 
@@ -498,7 +460,7 @@ def done_list(message):
             message.chat.id,
             response,
             parse_mode="HTML",
-            reply_markup=basic_keyboard()
+            reply_markup=BasicKeyboard().menu()
         )
 
 
@@ -547,19 +509,19 @@ def postpone_task(message):
         # Закройте соединение с базой данных
         cursor.close()
 
-        update_score(user_id, -5) # -5XP
+        UserScore(user_id, db).update_score(-5) # -5XP
 
         # Отправьте пользователю сообщение о том, что задача была отложена
         bot.send_message(message.chat.id, 
             f"Отложена [😳 -5 XP]:\n```\n{task_text}\n```", 
             parse_mode="Markdown",
-            reply_markup=basic_keyboard()
+            reply_markup=BasicKeyboard().menu()
         )
 
     else:
         bot.send_message(message.chat.id, 
             "В данный момент нет задач 'в работе' нет.",
-            reply_markup=basic_keyboard()
+            reply_markup=BasicKeyboard().menu()
         )
 
 
@@ -579,7 +541,11 @@ def pause_controller(user_id, chat_id):
 
 
     if not task:
-        bot.send_message(chat_id, "В данный момент нет задач 'в работе' нет.", reply_markup=basic_keyboard())
+        bot.send_message(
+            chat_id,
+            "В данный момент нет задач 'в работе' нет.",
+            reply_markup=BasicKeyboard().menu()
+        )
         return
 
     task_arr = task.task()
@@ -589,7 +555,7 @@ def pause_controller(user_id, chat_id):
         chat_id,
         f"На паузе:\n```\n{task_arr['task_text']}\n```",
         parse_mode="Markdown",
-        reply_markup=basic_keyboard()
+        reply_markup=BasicKeyboard().menu()
     )
 
 
@@ -631,105 +597,6 @@ def pause_task_for_user(user_id):
 
     return Task(row[0], user_id, db)
 
-def done_today(user_id):
-    """
-    Список завершенных задач за сегодня пользователем
-    """
-    cursor = db.cursor()
-
-    today = datetime.now().strftime("%Y-%m-%d")
-    
-    cursor.execute(
-        """
-        SELECT
-            task_number, task_text, completion_comment
-        FROM tasks
-        WHERE owner_id = %s AND status = 'завершена' AND date(end_time) = %s
-        """,
-        (user_id, today)
-    )
-
-    return cursor.fetchall()
-
-
-
-def done_current_task(user_id, chat_id, completion_comment=None):
-    """
-    Отметить текущую задачу как выполненную и обновить баллы пользователя
-    """
-    
-    cursor = db.cursor()
-
-    # Выбор задачи со статусом "в работе"
-    cursor.execute(
-        """
-        SELECT
-            task_number, task_text, start_time
-        FROM tasks
-        WHERE status in ('в работе', 'на паузе') AND owner_id = %s
-        LIMIT 1
-        """,
-        (user_id,)
-    )
-    row = cursor.fetchone()
-
-    if row:
-        task_number, task_text, start_time = row
-
-        # Обновление записи задачи в базе данных
-        cursor.execute(
-            """
-            UPDATE tasks 
-            SET
-                status = 'завершена',
-                end_time = NOW(),
-                completion_comment = %s
-            WHERE task_number = %s AND owner_id = %s
-            """,
-            (completion_comment, task_number, user_id,)
-        )
-        cursor.close()
-
-        end_time = datetime.now()
-
-        time_taken = (end_time - start_time).total_seconds() / 60
-
-        
-        today_count = len(done_today(user_id))
-        # если today_count делится на 3 (комбо из 3х задач), то увеличиваем баллы на 15
-        if today_count % 3:
-            bonus_str = "✨"
-            bonus = 15
-        else:
-            bonus_str = "✨3x КОМБО🚀" 
-            bonus = 30
-
-        update_score(user_id, bonus)
-
-        # Кнопки:
-        markup = types.InlineKeyboardMarkup(row_width=3)
-        btn1 = types.InlineKeyboardButton('Взять следующее', callback_data='new_task')
-        btn2 = types.InlineKeyboardButton(
-            'Запланировать повторно', callback_data='plan_task_' + str(task_number)
-        )
-        markup.add(btn1, btn2)
-
-        done_compliment = DoneCompliment().compliment()
-
-        bot.send_message(
-            chat_id,
-            f"{done_compliment} [{bonus_str} +{bonus} XP], за {time_taken:.0f} мин",
-            parse_mode="Markdown",
-            reply_markup=markup
-        )
-
-    else:
-        bot.send_message(
-            chat_id,
-            "В данный момент в работе задач нет, показать список? /list",
-            reply_markup=basic_keyboard()
-        )
-
 
 # завершить задачу
 @bot.message_handler(
@@ -755,8 +622,8 @@ def done_task(message):
     except ValueError as e:
         completion_comment = None
 
-    done_current_task(user_id, chat_id, completion_comment=completion_comment)
-
+    
+    DoneTask(db, bot, user_id).done_task(chat_id, completion_comment=completion_comment)
 
 
 @bot.callback_query_handler(func=lambda call: call.data == 'new_task')
@@ -799,13 +666,13 @@ def btn_answer_plan_task(call):
     )
     cursor.close()
 
-    update_score(user_id, 5) # +5XP
+    UserScore(user_id, db).update_score(5) # +5XP
     
     bot.send_message(
         call.message.chat.id,
         f"Готово 👍 +5 XP:\n```\n{task_text}\n```",
         parse_mode="Markdown",
-        reply_markup=basic_keyboard()
+        reply_markup=BasicKeyboard().menu()
     )
 
     # Сохраним эмбеддинг для задачи (смысловое пространство, для поиска похожих задач)
@@ -836,7 +703,7 @@ def btn_done_task(call):
     """
     Кнопка Готово задачи
     """
-    done_current_task(call.from_user.id, call.message.chat.id)
+    DoneTask(db, bot, call.from_user.id).done_task(call.message.chat.id)
 
     bot.answer_callback_query(call.id)
 
@@ -899,7 +766,7 @@ def other_task(message):
 
     cursor.close()
 
-    update_score(user_id, -5) # -5XP
+    UserScore(user_id, db).update_score(-5) # -5XP
 
     bot.send_message(message.chat.id, 
         f"Отложена [😳 -5 XP]:\n```\n{task_text}\n```", 
@@ -974,7 +841,11 @@ def delete_task(message):
     cursor.close()
 
     # Отправляем сообщение об успешном удалении дела
-    bot.send_message(message.chat.id, f"Дело с номером {task_number} удалено.", reply_markup=basic_keyboard())
+    bot.send_message(
+        message.chat.id,
+        f"Дело с номером {task_number} удалено.",
+        reply_markup=BasicKeyboard().menu()
+    )
 
 
 
@@ -1014,8 +885,7 @@ def delayed_task_msg(message):
     task_id = cursor.fetchone()[0]
     cursor.close()
 
-
-    update_score(user_id, 5) # +5XP
+    UserScore(user_id, db).update_score(5) # +5XP
     
     formatted_date = planned_date.strftime("%d.%m.%Y")
     days_until = (planned_date - datetime.now()).days
@@ -1023,7 +893,7 @@ def delayed_task_msg(message):
         message.chat.id,
         f"Запланировал на 📆 {formatted_date} 👍 +5 XP:\n```\n{task_text}\n```\nчерез **{days_until} дней**",
         parse_mode="Markdown",
-        reply_markup=basic_keyboard()
+        reply_markup=BasicKeyboard().menu()
     )
 
     # Сохраним эмбеддинг для задачи (смысловое пространство, для поиска похожих задач)
@@ -1047,7 +917,7 @@ def edit_msg(message):
         bot.send_message(
             message.chat.id,
             f"Не смог определить номер дела (его можно посмотреть командой /list или 'список')",
-            reply_markup=basic_keyboard()            
+            reply_markup=BasicKeyboard().menu()
         )
         return
     
@@ -1072,7 +942,7 @@ def edit_msg(message):
         bot.send_message(
             message.chat.id, 
             f"Не нашли дело с номером {task_number} в списке ожидающих.",
-            reply_markup=basic_keyboard()
+            reply_markup=BasicKeyboard().menu()
         )
         return
 
@@ -1087,7 +957,7 @@ def edit_msg(message):
     bot.send_message(
         message.chat.id,
         f"Отредактировано #{task_number}:\n```\nбыло: {src_task_text}\nстало: {task_text}\n```",
-        parse_mode="Markdown", reply_markup=basic_keyboard()
+        parse_mode="Markdown", reply_markup=BasicKeyboard().menu()
     )
 
 
@@ -1104,7 +974,7 @@ def new_task_msg(message):
             message.chat.id,
             f"Мета-информация:\n```\n{json.dumps(meta, indent=2)}\n```",
             parse_mode="Markdown",
-            reply_markup=basic_keyboard()
+            reply_markup=BasicKeyboard().menu()
         )
     except Exception as e:
         meta = {}
@@ -1147,12 +1017,12 @@ def add_task(chat_id, user_id, task_text, telegram_message_id):
     task_number = cursor.fetchone()[0]
     cursor.close()
 
-    update_score(user_id, 5) # +5XP
+    UserScore(user_id, db).update_score(5) # +5XP
 
     bot.send_message(
         chat_id,
         f"Записал #{task_number} 👍 +5 XP",
-        reply_markup=basic_keyboard()
+        reply_markup=BasicKeyboard().menu()
     )
 
     # Закрытие курсора и соединения с базой данных
@@ -1167,7 +1037,7 @@ def add_task(chat_id, user_id, task_text, telegram_message_id):
         bot.send_message(
             chat_id,
             f"🔎 Очень похожие задачи (удалить командой /delete номер):\n{tasks_str}",
-            reply_markup=basic_keyboard()
+            reply_markup=BasicKeyboard().menu()
         )
 
 
@@ -1186,7 +1056,7 @@ def voice_msg(message):
     bot.send_message(
         message.chat.id,
         f"Voice принят, обрабатываю... (займет 15-20 секунд) 🎙",
-        reply_markup=basic_keyboard()
+        reply_markup=BasicKeyboard().menu()
     )
 
     p = Process(
@@ -1232,7 +1102,7 @@ def handle_edited_message(message):
         message.chat.id,
         f"Отредактировано:\n```\n{message.text}\n```",
         parse_mode="Markdown",
-        reply_markup=basic_keyboard()
+        reply_markup=BasicKeyboard().menu()
     )
 
 
