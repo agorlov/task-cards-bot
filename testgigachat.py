@@ -8,13 +8,7 @@ import uuid
 # 02be40a8-562e-4ca8-83cb-b87ae2bd4644
 
 # Авторизационные данные
-AUTH_DATA = "MjUyOTg0NmYtNGE3Yy00NTk4LWJmNWItMmMyMTA4NzQ2NGMwOjAyYmU0MGE4LTU2MmUtNGNhOC04M2NiLWI4N2FlMmJkNDY0NA=="
-
-# Client ID
-# 2529846f-4a7c-4598-bf5b-2c21087464c0
-
-# Scope
-# GIGACHAT_API_PERS
+AUTH_DATA = "MjUyOTg0NmYtNGE3.....=="
 
 url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
 

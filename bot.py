@@ -91,6 +91,7 @@ from src.added_user import AddedUser
 from src.user_score import UserScore
 from src.basic_keyboard import BasicKeyboard
 from src.done_task import DoneTask
+from src.paused_task import PausedTask
 
 
 
@@ -166,20 +167,6 @@ help_advanced = """
 
 """
 
-# текущая дата
-
-# """
-# Примеры дел:
-# - вынести мусор
-# - помыть посуду
-# - протереть пыль
-# - купить продукты
-# - выкинуть просроченнные продукты
-# - полить цветы
-# - 
-# """
-
-# 
 
 def my_middleware_handler(message):
     """
@@ -537,8 +524,7 @@ def pause_task(message):
 
 
 def pause_controller(user_id, chat_id):
-    task = pause_task_for_user(user_id)
-
+    task = PausedTask(user_id, db).pause()
 
     if not task:
         bot.send_message(
@@ -557,45 +543,6 @@ def pause_controller(user_id, chat_id):
         parse_mode="Markdown",
         reply_markup=BasicKeyboard().menu()
     )
-
-
-
-def pause_task_for_user(user_id):
-    """
-    Поставить задачу на паузу
-
-    Найти задачу в работе, поставить её на паузу и вернуть Task
-    а если задачи нет, вернуть None
-    """
-
-    cursor = db.cursor()
-    cursor.execute(
-        """
-        SELECT task_number
-        FROM tasks
-        WHERE status = 'в работе' AND owner_id = %s
-        LIMIT 1
-        """,
-        (user_id,)
-    )
-    row = cursor.fetchone()
-    
-    if not row:
-        return None
-    
-    # Обновление записи задачи в базе данных - поставить на паузу
-    cursor.execute(
-        """
-        UPDATE tasks
-        SET status = 'на паузе',
-            start_time = NULL
-        WHERE task_number = %s AND owner_id = %s
-        """,
-        (row[0], user_id,)
-    )
-    cursor.close()
-
-    return Task(row[0], user_id, db)
 
 
 # завершить задачу
@@ -1106,12 +1053,9 @@ def handle_edited_message(message):
     )
 
 
-                     
-    
 
 # Начинаем опрос сервера Telegram
 bot.polling()
-
 
 
 print("Bot слушает...")
