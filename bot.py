@@ -193,30 +193,35 @@ def my_middleware_handler(message):
 bot.middleware_handler(my_middleware_handler)
 
 
-
-
-def exception_handler(func):
+def exception_handler(chat_id_func):
     """
     Декоратор для логирования ошибок в обработчиках команд.
+
+    Пример применения:
+    передаем лямбду, возвращающую chat_id
+    @exception_handler(lambda m: m.chat.id)
     """
-    @wraps(func)
-    def wrapper(message):
-        try:
-            return func(message)
-        except Exception as e:
-            short_uuid = str(uuid.uuid4())[:6]
-            logging.error(
-                "%s ошибка [msg] '%s': %s",
-                short_uuid,
-                func.__name__,
-                str(e),
-                exc_info=True
-            )
-            bot.send_message(
-                message.chat.id,
-                f"Произошла ошибка {short_uuid}. Попробуйте повторно, либо напишите @agorlov"
-            )
-    return wrapper
+    def decorator(func):
+        @wraps(func)
+        def wrapper(message):
+            try:
+                return func(message)
+            except Exception as e:
+                short_uuid = str(uuid.uuid4())[:6]
+                logging.error(
+                    "%s ошибка [msg] '%s': %s",
+                    short_uuid,
+                    func.__name__,
+                    str(e),
+                    exc_info=True
+                )
+                chat_id = chat_id_func(message)
+                bot.send_message(
+                    chat_id,
+                    f"Произошла ошибка {short_uuid}. Попробуйте повторно, либо напишите @agorlov"
+                )
+        return wrapper
+    return decorator
 
 def exception_btn_handler(func):
     """
@@ -243,7 +248,7 @@ def exception_btn_handler(func):
 
 
 @bot.message_handler(commands=['start'])
-@exception_handler
+@exception_handler(lambda m: m.chat.id)
 def start_msg(message):
 
     bot.send_message(
@@ -260,7 +265,7 @@ def start_msg(message):
     or message.text.lower() == "справка"
     or message.text.lower() == "помощь"
 )
-@exception_handler
+@exception_handler(lambda m: m.chat.id)
 def help_msg(message):
     """
     Обработка команды /help
@@ -273,7 +278,7 @@ def help_msg(message):
     )
 
 @bot.message_handler(commands=['help2'])
-@exception_handler
+@exception_handler(lambda m: m.chat.id)
 def start_msg(message):
     bot.send_message(
         message.chat.id,
@@ -292,7 +297,7 @@ def start_msg(message):
     or message.text.lower() == "/list"
     or message.text.lower() == "list"
 )
-@exception_handler
+@exception_handler(lambda m: m.chat.id)
 def task_list(message):
     # Получение идентификатора пользователя из сообщения
     user_id = message.from_user.id
@@ -383,7 +388,7 @@ def task_list(message):
         or message.text.lower().startswith("завершенные")
         or message.text.lower().startswith("/завершенные")
 )
-@exception_handler
+@exception_handler(lambda m: m.chat.id)
 def done_list(message):
     # Получение идентификатора пользователя из сообщения
     user_id = message.from_user.id
@@ -459,7 +464,7 @@ def done_list(message):
         or message.text.lower().startswith("/later")
         or message.text.lower().startswith("/отложить")
 )
-@exception_handler
+@exception_handler(lambda m: m.chat.id)
 def postpone_task(message):
     cursor = db.cursor()
 
@@ -518,7 +523,7 @@ def postpone_task(message):
         or message.text.lower().startswith("/пауза")
         or message.text.lower() == "/pause"
 )
-@exception_handler
+@exception_handler(lambda m: m.chat.id)
 def pause_task(message):   
     pause_controller(message.from_user.id, message.chat.id)
 
@@ -557,7 +562,7 @@ def pause_controller(user_id, chat_id):
         or message.text.lower().startswith("/сделалано")
         or message.text.lower().startswith("сделалано")
 )
-@exception_handler
+@exception_handler(lambda m: m.chat.id)
 def done_task(message):
 
     user_id = message.from_user.id
@@ -574,8 +579,8 @@ def done_task(message):
 
 
 @bot.callback_query_handler(func=lambda call: call.data == 'new_task')
-@exception_btn_handler
-def btn_answer_new_task(call):   
+@exception_handler(lambda m: m.message.chat.id)
+def btn_answer_new_task(call):
     bot.answer_callback_query(callback_query_id=call.id, text="Ок, минутку..")
     started_task = StartedTaskController(
         db,
@@ -588,7 +593,7 @@ def btn_answer_new_task(call):
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('plan_task'))
-@exception_btn_handler
+@exception_handler(lambda m: m.message.chat.id)
 def btn_answer_plan_task(call):
     # Получение идентификатора пользователя из сообщения
     user_id = call.from_user.id
@@ -639,13 +644,13 @@ def btn_answer_plan_task(call):
     or message.text.lower() == "/продолжить"
     or message.text.lower() == "продолжить"
 )
-@exception_handler
+@exception_handler(lambda m: m.chat.id)
 def start_task(message):
     started_task = StartedTaskController(db, bot, message.chat.id, message.from_user.id)
     started_task.startTask()
 
 @bot.callback_query_handler(func=lambda call: call.data == 'done_task_btn')
-@exception_btn_handler
+@exception_handler(lambda m: m.message.chat.id)
 def btn_done_task(call):
     """
     Кнопка Готово задачи
@@ -655,7 +660,7 @@ def btn_done_task(call):
     bot.answer_callback_query(call.id)
 
 @bot.callback_query_handler(func=lambda call: call.data == 'pause_task_btn')
-@exception_btn_handler
+@exception_handler(lambda m: m.message.chat.id)
 def btn_pause_task(call):
     """
     Кнопка продолжить позже (ставит на паузу)
@@ -671,7 +676,7 @@ def btn_pause_task(call):
         or message.text.lower().startswith("/другое дело")
         or message.text.lower().startswith("/another")
 )
-@exception_handler
+@exception_handler(lambda m: m.chat.id)
 def other_task(message):
 
     cursor = db.cursor()
@@ -763,7 +768,7 @@ def other_task(message):
         or message.text.lower().startswith("/удали")
         or message.text.lower().startswith("/delete")
 )
-@exception_handler
+@exception_handler(lambda m: m.chat.id)
 def delete_task(message):
 
     match = re.search(r'(\d+)', message.text.lower())  # Поиск идентификатора дела
@@ -801,7 +806,7 @@ def delete_task(message):
         or message.text.lower().startswith("запланируй")
         or message.text.lower().startswith("/plan")
 )
-@exception_handler
+@exception_handler(lambda m: m.chat.id)
 def delayed_task_msg(message):
     # Получение идентификатора пользователя из сообщения
     user_id = message.from_user.id
@@ -853,7 +858,7 @@ def delayed_task_msg(message):
     
 # Команда /edit 33 отредактированный текст задачи
 @bot.message_handler(commands=['edit'])
-@exception_handler
+@exception_handler(lambda m: m.chat.id)
 def edit_msg(message):
 
     match = re.search(r'(\d+)\s+(.+)', message.text)  # Поиск идентификатора дела
@@ -910,7 +915,7 @@ def edit_msg(message):
 
 
 @bot.message_handler()
-@exception_handler
+@exception_handler(lambda m: m.chat.id)
 def new_task_msg(message):
     try:
         # Прочитаем дело с помощью LLM, на пердмет отложенности
@@ -992,7 +997,7 @@ def add_task(chat_id, user_id, task_text, telegram_message_id):
 from multiprocessing import Process
 
 @bot.message_handler(content_types=['voice'])
-@exception_handler
+@exception_handler(lambda m: m.chat.id)
 def voice_msg(message):
     user_id = message.from_user.id
     file_info = bot.get_file(message.voice.file_id)
@@ -1034,7 +1039,7 @@ def process_voice(file_name: str, user_id, chat_id, message_id) -> None:
 
 
 @bot.edited_message_handler(content_types=['text'])
-@exception_handler
+@exception_handler(lambda m: m.chat.id)
 def handle_edited_message(message):
 
     message_id = message.message_id
